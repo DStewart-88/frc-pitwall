@@ -1,0 +1,294 @@
+# Pitwall robot profile: Team 88's 2026 competition robot.
+# Written from the BaseComp code (BOB build 0d4e0b9). Each key field may list several keys;
+# the first one present in a log is used. The second key in a list is the name the
+# AdvantageKit IO-layer rewrite will log, so this profile keeps working after that change.
+
+[robot]
+name = "2026 Comp"
+project = "2026-Robot"
+battery_voltage = "/SystemStats/BatteryVoltage"
+enabled = "/DriverStation/Enabled"
+autonomous = "/DriverStation/Autonomous"
+brownout = "/SystemStats/BrownedOut"
+
+[game]
+auto_s = 20
+teleop_s = 140
+
+[settings]
+grid_ms = 20
+active_amps = 2.0      # a motor counts as active above this supply current
+saturation = 0.97      # applied volts / battery volts at or above this counts as full output
+current_mode = "signed"
+
+# Robot states, highest priority first. Ticks where none is on are "Other" (shown as "Still").
+[[state]]
+name = "Shooting"
+priority = 1
+when = "/RealOutputs/RobotContainer/IsShooting"
+
+[[state]]
+name = "Driving"
+priority = 2
+any_above = [
+  "/Drive/Module0/DriveVelocityRadPerSec", "/Drive/Module1/DriveVelocityRadPerSec",
+  "/Drive/Module2/DriveVelocityRadPerSec", "/Drive/Module3/DriveVelocityRadPerSec",
+]
+threshold = 3.0        # wheel rad/s, about 0.15 m/s on a 4 in wheel
+
+# Subsystems as the team reports them. `color` is a fixed palette slot.
+[[subsystem]]
+id = "drive"
+name = "Drive"
+color = 0
+
+[[subsystem]]
+id = "steer"
+name = "Steer"
+color = 1
+
+[[subsystem]]
+id = "shooter"
+name = "Shooter"
+color = 2
+needed_in = ["Shooting"]
+
+[[subsystem]]
+id = "feeder"
+name = "Feeder"
+color = 3
+needed_in = ["Shooting"]
+
+[[subsystem]]
+id = "floor"
+name = "Floor, roof, funnel"
+color = 4
+needed_in = ["Shooting"]
+
+[[subsystem]]
+id = "intake"
+name = "Intake rollers"
+color = 5
+
+[[subsystem]]
+id = "aim"
+name = "Turret, hood, pivot"
+color = 6
+
+[[motor]]
+id = "drive-fl"
+name = "Drive FL"
+subsystem = "drive"
+can_id = 12
+bus = "Drivetrain"
+supply = "/Drive/Module0/DriveSupplyCurrentAmps"
+voltage = "/Drive/Module0/DriveAppliedVolts"
+velocity = "/Drive/Module0/DriveVelocityRadPerSec"
+stator = "/Drive/Module0/DriveCurrentAmps"
+connected = "/Drive/Module0/DriveConnected"
+
+[[motor]]
+id = "drive-fr"
+name = "Drive FR"
+subsystem = "drive"
+can_id = 23
+bus = "Drivetrain"
+supply = "/Drive/Module1/DriveSupplyCurrentAmps"
+voltage = "/Drive/Module1/DriveAppliedVolts"
+velocity = "/Drive/Module1/DriveVelocityRadPerSec"
+stator = "/Drive/Module1/DriveCurrentAmps"
+connected = "/Drive/Module1/DriveConnected"
+
+[[motor]]
+id = "drive-bl"
+name = "Drive BL"
+subsystem = "drive"
+can_id = 11
+bus = "Drivetrain"
+supply = "/Drive/Module2/DriveSupplyCurrentAmps"
+voltage = "/Drive/Module2/DriveAppliedVolts"
+velocity = "/Drive/Module2/DriveVelocityRadPerSec"
+stator = "/Drive/Module2/DriveCurrentAmps"
+connected = "/Drive/Module2/DriveConnected"
+
+[[motor]]
+id = "drive-br"
+name = "Drive BR"
+subsystem = "drive"
+can_id = 0
+bus = "Drivetrain"
+supply = "/Drive/Module3/DriveSupplyCurrentAmps"
+voltage = "/Drive/Module3/DriveAppliedVolts"
+velocity = "/Drive/Module3/DriveVelocityRadPerSec"
+stator = "/Drive/Module3/DriveCurrentAmps"
+connected = "/Drive/Module3/DriveConnected"
+
+[[motor]]
+id = "steer-fl"
+name = "Steer FL"
+subsystem = "steer"
+can_id = 13
+bus = "Drivetrain"
+supply = "/Drive/Module0/TurnSupplyCurrentAmps"
+voltage = "/Drive/Module0/TurnAppliedVolts"
+velocity = "/Drive/Module0/TurnVelocityRadPerSec"
+stator = "/Drive/Module0/TurnCurrentAmps"
+connected = "/Drive/Module0/TurnConnected"
+
+[[motor]]
+id = "steer-fr"
+name = "Steer FR"
+subsystem = "steer"
+can_id = 22
+bus = "Drivetrain"
+supply = "/Drive/Module1/TurnSupplyCurrentAmps"
+voltage = "/Drive/Module1/TurnAppliedVolts"
+velocity = "/Drive/Module1/TurnVelocityRadPerSec"
+stator = "/Drive/Module1/TurnCurrentAmps"
+connected = "/Drive/Module1/TurnConnected"
+
+[[motor]]
+id = "steer-bl"
+name = "Steer BL"
+subsystem = "steer"
+can_id = 10
+bus = "Drivetrain"
+supply = "/Drive/Module2/TurnSupplyCurrentAmps"
+voltage = "/Drive/Module2/TurnAppliedVolts"
+velocity = "/Drive/Module2/TurnVelocityRadPerSec"
+stator = "/Drive/Module2/TurnCurrentAmps"
+connected = "/Drive/Module2/TurnConnected"
+
+[[motor]]
+id = "steer-br"
+name = "Steer BR"
+subsystem = "steer"
+can_id = 1
+bus = "Drivetrain"
+supply = "/Drive/Module3/TurnSupplyCurrentAmps"
+voltage = "/Drive/Module3/TurnAppliedVolts"
+velocity = "/Drive/Module3/TurnVelocityRadPerSec"
+stator = "/Drive/Module3/TurnCurrentAmps"
+connected = "/Drive/Module3/TurnConnected"
+
+[[motor]]
+id = "shooter-main"
+name = "Shooter main"
+subsystem = "shooter"
+can_id = 7
+bus = "rio"
+supply = ["/RealOutputs/Shooter/MainSupplyCurrent", "/Shooter/SupplyCurrentAmps"]
+voltage = ["/RealOutputs/Shooter/MainVoltage", "/Shooter/AppliedVolts"]
+velocity = ["/RealOutputs/Shooter/Velocity", "/Shooter/VelocityRotPerSec"]
+
+[[motor]]
+id = "shooter-follower"
+name = "Shooter follower"
+subsystem = "shooter"
+can_id = 6
+bus = "rio"
+supply = ["/RealOutputs/Shooter/FollowerSupplyCurrent", "/Shooter/FollowerSupplyCurrentAmps"]
+voltage = ["/RealOutputs/Shooter/FollowerVoltage", "/Shooter/FollowerAppliedVolts"]
+velocity = ["/RealOutputs/Shooter/Velocity", "/Shooter/VelocityRotPerSec"]
+
+[[motor]]
+id = "feeder"
+name = "Feeder"
+subsystem = "feeder"
+can_id = 4
+bus = "rio"
+supply = ["/RealOutputs/Feeder/SupplyCurrent", "/Feeder/SupplyCurrentAmps"]
+voltage = ["/RealOutputs/Feeder/Voltage", "/Feeder/AppliedVolts"]
+velocity = ["/RealOutputs/Feeder/Velocity", "/Feeder/VelocityRotPerSec"]
+
+[[motor]]
+id = "floor-spinner"
+name = "Floor spinner"
+subsystem = "floor"
+can_id = 19
+bus = "rio"
+supply = ["/RealOutputs/HotTub/SpinnerSupplyCurrent", "/HotTub/Spinner/SupplyCurrentAmps"]
+voltage = ["/RealOutputs/HotTub/SpinnerVoltage", "/HotTub/Spinner/AppliedVolts"]
+velocity = ["/RealOutputs/HotTub/SpinnerVelocity", "/HotTub/Spinner/VelocityRotPerSec"]
+
+[[motor]]
+id = "roof"
+name = "Roof"
+subsystem = "floor"
+can_id = 16
+bus = "rio"
+supply = ["/RealOutputs/HotTub/RoofSupplyCurrent", "/HotTub/Roof/SupplyCurrentAmps"]
+voltage = ["/RealOutputs/HotTub/RoofVoltage", "/HotTub/Roof/AppliedVolts"]
+velocity = ["/RealOutputs/HotTub/RoofVelocity", "/HotTub/Roof/VelocityRotPerSec"]
+
+[[motor]]
+id = "funnel"
+name = "Funnel"
+subsystem = "floor"
+can_id = 21
+bus = "rio"
+supply = ["/RealOutputs/HotTub/FunnelSupplyCurrent", "/HotTub/Funnel/SupplyCurrentAmps"]
+voltage = ["/RealOutputs/HotTub/FunnelVoltage", "/HotTub/Funnel/AppliedVolts"]
+velocity = ["/RealOutputs/HotTub/FunnelVelocity", "/HotTub/Funnel/VelocityRotPerSec"]
+
+[[motor]]
+id = "intake-left"
+name = "Intake roller left"
+subsystem = "intake"
+can_id = 15
+bus = "rio"
+supply = ["/RealOutputs/Intake/RollerMainSupplyCurrent", "/Intake/Roller/SupplyCurrentAmps"]
+voltage = ["/RealOutputs/Intake/RollerMainVoltage", "/Intake/Roller/AppliedVolts"]
+velocity = ["/RealOutputs/Intake/RollerMainVelocity", "/Intake/Roller/VelocityRotPerSec"]
+
+[[motor]]
+id = "intake-right"
+name = "Intake roller right"
+subsystem = "intake"
+can_id = 18
+bus = "rio"
+supply = ["/RealOutputs/Intake/RollerFollowerSupplyCurrent", "/Intake/Roller/FollowerSupplyCurrentAmps"]
+voltage = ["/RealOutputs/Intake/RollerFollowerVoltage", "/Intake/Roller/FollowerAppliedVolts"]
+velocity = ["/RealOutputs/Intake/RollerFollowerVelocity", "/Intake/Roller/FollowerVelocityRotPerSec"]
+
+[[motor]]
+id = "turret"
+name = "Turret"
+subsystem = "aim"
+can_id = 3
+bus = "rio"
+supply = ["/RealOutputs/Turret/TurretSupplyCurrent", "/Turret/TurretSupplyCurrentAmps"]
+voltage = ["/RealOutputs/Turret/TurretVoltage", "/Turret/TurretAppliedVolts"]
+velocity = ["/RealOutputs/Turret/TurretVelocity", "/Turret/TurretVelocityRotPerSec"]
+
+[[motor]]
+id = "retractomatic"
+name = "Retractomatic"
+subsystem = "aim"
+can_id = 17
+bus = "rio"
+supply = ["/RealOutputs/Turret/RetractomaticSupplyCurrent", "/Turret/RetractomaticSupplyCurrentAmps"]
+voltage = ["/RealOutputs/Turret/RetractomaticVoltage", "/Turret/RetractomaticAppliedVolts"]
+velocity = ["/RealOutputs/Turret/RetractomaticVelocity", "/Turret/RetractomaticVelocityRotPerSec"]
+
+[[motor]]
+id = "hood"
+name = "Hood"
+subsystem = "aim"
+can_id = 5
+bus = "rio"
+supply = ["/RealOutputs/Hood/SupplyCurrent", "/Hood/SupplyCurrentAmps"]
+voltage = ["/RealOutputs/Hood/Voltage", "/Hood/AppliedVolts"]
+velocity = ["/RealOutputs/Hood/Velocity", "/Hood/VelocityRotPerSec"]
+
+[[motor]]
+id = "intake-pivot"
+name = "Intake pivot"
+subsystem = "aim"
+can_id = 14
+bus = "rio"
+supply = ["/RealOutputs/Intake/PivotSupplyCurrent", "/Intake/Pivot/SupplyCurrentAmps"]
+
+[[unmeasured]]
+name = "Control system (roboRIO, radio, Limelights, CANivore, Pigeon)"
+estimate_amps = 0      # 0 = shown as "not measured"; fill in from a bench measurement
