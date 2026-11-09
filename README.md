@@ -23,7 +23,8 @@ cd frc-pitwall
 
 Then open **Pitwall** from the app menu. It opens in your browser, runs only on this computer and
 needs no internet. Opening it again while it's running just brings the page back; **Quit** in the
-page stops it. To update, `git pull` in the frc-pitwall folder. `./install-linux.sh --uninstall`
+page stops it. To update, `git pull` in the frc-pitwall folder, then open Pitwall: a running copy
+with older code is restarted on the new code, and older reports are redrawn. `./install-linux.sh --uninstall`
 removes the menu entry and keeps your data. (Without installing: `python3 -m pitwall app`.)
 
 1. **Set up your robot** once: pick the robot code folder and a folder of its logs. Pitwall reads
