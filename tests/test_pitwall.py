@@ -3,7 +3,7 @@ import tempfile
 import unittest
 
 from pitwall import power
-from pitwall.match import build_match
+from pitwall.match import SkipLog, build_match
 from pitwall.profile import check_profile, load_profile
 from pitwall.report.html import render
 from pitwall.wpilog import WPILog, hold
@@ -177,6 +177,30 @@ class PowerTest(Base):
         self.assertIn("<h1>Q12</h1>", page)
         self.assertIn("Where the charge went", page)
         self.assertNotIn("http://", page.replace("http://www.w3.org", ""))
+
+
+class SkipTest(Base):
+    def test_never_enabled(self):
+        path = os.path.join(self.dir, "idle.wpilog")
+        w = LogWriter(path)
+        w.put("/DriverStation/Enabled", 0.0, False)
+        w.put("/SystemStats/BatteryVoltage", 0.0, 12.5)
+        w.put("/M1/SupplyCurrent", 0.0, 0.0)
+        w.put("/M2/SupplyCurrent", 0.0, 0.0)
+        w.close()
+        with self.assertRaises(SkipLog):
+            build_match(WPILog(path), self.profile())
+
+    def test_no_current_logged(self):
+        path = os.path.join(self.dir, "old.wpilog")
+        w = LogWriter(path)
+        w.put("/DriverStation/Enabled", 0.0, False)
+        w.put("/DriverStation/Enabled", 1.0, True)
+        w.put("/DriverStation/Enabled", 5.0, False)
+        w.put("/SystemStats/BatteryVoltage", 0.0, 12.5)
+        w.close()
+        with self.assertRaises(SkipLog):
+            build_match(WPILog(path), self.profile())
 
 
 class ProfileCheckTest(Base):

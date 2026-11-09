@@ -9,7 +9,7 @@ import time
 from typing import List, Optional
 
 from . import __version__, power
-from .match import build_match
+from .match import SkipLog, build_match
 from .profile import ProfileError, check_profile, load_profile
 from .report.html import render
 from .wpilog import WPILog, WPILogError
@@ -41,12 +41,26 @@ def run_report(log_path: str, profile_path: str, out_dir: str, current_mode: Opt
     return payload
 
 
+def _expand(paths: List[str]) -> List[str]:
+    out = []
+    for p in paths:
+        if os.path.isdir(p):
+            for root, _, files in os.walk(p):
+                out += [os.path.join(root, f) for f in sorted(files) if f.endswith(".wpilog")]
+        else:
+            out.append(p)
+    return out
+
+
 def cmd_report(a) -> int:
     rc = 0
-    for path in a.logs:
+    for path in _expand(a.logs):
         t = time.time()
         try:
             payload = run_report(path, a.profile, a.out, "abs" if a.abs else None)
+        except SkipLog as e:
+            print(f"skipped    {os.path.basename(path)}: {e}")
+            continue
         except (WPILogError, ValueError, KeyError, ProfileError) as e:
             print(f"error   {path}: {e}", file=sys.stderr)
             rc = 1
@@ -84,7 +98,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("report", help="write a power report (HTML + JSON) for each log")
-    r.add_argument("logs", nargs="+")
+    r.add_argument("logs", nargs="+", help="log files, or folders to search for .wpilog files")
     r.add_argument("-p", "--profile", required=True)
     r.add_argument("-o", "--out", default="pitwall-reports")
     r.add_argument("--abs", action="store_true",

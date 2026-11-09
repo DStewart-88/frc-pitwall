@@ -44,6 +44,13 @@ class Identity:
         return f"Practice {m.group(1)}" if m else "Practice"
 
 
+MIN_ENABLED_S = 2.0  # shorter than this is a bump of the enable button, not a run
+
+
+class SkipLog(Exception):
+    """A log Pitwall can't make a report from (never enabled, or no motor current logged)."""
+
+
 @dataclass
 class Block:
     start: float
@@ -152,7 +159,14 @@ def build_match(log: WPILog, profile: Profile) -> Match:
                 auto_on = va
         blocks.append(Block(t, end, "auto" if auto_on else "teleop"))
     if not blocks:
-        raise ValueError(f"{ident.file}: the robot was never enabled in this log")
+        raise SkipLog("the robot was never enabled in this log")
+    on_s = sum(b.end - b.start for b in blocks)
+    if on_s < MIN_ENABLED_S:
+        raise SkipLog(f"the robot was only enabled for {on_s:.1f} s")
+    have = sum(1 for r in check.resolved.values() if r["supply"] is not None)
+    if have < len(profile.motors) / 2:
+        raise SkipLog(f"only {have} of {len(profile.motors)} motors' supply-current keys are in this log "
+                      "(code from before supply current was logged, or the wrong profile)")
 
     dt = profile.grid_ms / 1000.0
     start = max(log.t_span[0], blocks[0].start - PAD_S)
