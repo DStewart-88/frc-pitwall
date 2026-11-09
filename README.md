@@ -9,7 +9,8 @@ Built by FRC Team 88 (TJ²) for our own robot, and open for any team to use or b
 ## Status
 
 Phase 3 in progress: the app works on Linux (install, robot setup from the code, events, folder
-watching, reports). A Windows installer comes next. The command line still works too.
+watching, reports). A Windows installer is in, not yet tried on a Windows machine. The command
+line still works too.
 
 ## The app
 
@@ -21,7 +22,20 @@ cd frc-pitwall
 ./install-linux.sh
 ```
 
-Then open **Pitwall** from the app menu. It opens in your browser, runs only on this computer and
+**Install on Windows** (for the pit laptop):
+
+1. Install Python 3.11 or newer from [python.org](https://www.python.org/downloads/) (tick
+   "Add python.exe to PATH").
+2. Get Pitwall: `git clone https://github.com/DStewart-88/frc-pitwall`, or download the ZIP from
+   GitHub and unzip it somewhere permanent, such as Documents.
+3. Double-click **install-windows.bat** in the frc-pitwall folder. It adds Pitwall to the Start
+   menu and the Desktop (`--no-desktop` for the Start menu only; `--uninstall` removes them).
+   If Windows says it protected your PC, choose More info, then Run anyway.
+
+Pitwall opens without a console window; its messages go to `%APPDATA%\Pitwall\pitwall.log`. To
+update, `git pull` (or unzip a newer download over the folder), then open Pitwall.
+
+On either system, open **Pitwall** from the menu. It opens in your browser, runs only on this computer and
 needs no internet. Opening it again while it's running just brings the page back; **Quit** in the
 page stops it. To update, `git pull` in the frc-pitwall folder, then open Pitwall: a running copy
 with older code is restarted on the new code, and older reports are redrawn. `./install-linux.sh --uninstall`
