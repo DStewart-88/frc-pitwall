@@ -125,11 +125,21 @@ def cmd_event(a) -> int:
                 skipped.setdefault(c.most_common(1)[0][0], []).append(
                     {"file": os.path.basename(path), "reason": r["skip"]})
 
-    loose = groups.pop("", None)
-    if loose and loose["other"]:
-        print(f"{len(loose['other'])} practice log(s) have no event name and aren't in any event report.")
-    if loose and loose["matches"]:
-        groups["EVENT"] = {"matches": loose["matches"], "other": []}
+    # Logs with no event name (the DS never got one, e.g. a robot reboot mid-match) join the
+    # event whose logs share their folder.
+    loose = groups.pop("", None) or {"matches": [], "other": []}
+    unplaced = {"matches": [], "other": []}
+    for kind in ("matches", "other"):
+        for p in loose[kind]:
+            c = dir_event.get(os.path.dirname(path_of[p["source"]["file"]]))
+            if c:
+                groups.setdefault(c.most_common(1)[0][0], {"matches": [], "other": []})[kind].append(p)
+            else:
+                unplaced[kind].append(p)
+    if unplaced["other"]:
+        print(f"{len(unplaced['other'])} practice log(s) have no event name and aren't in any event report.")
+    if unplaced["matches"]:
+        groups["EVENT"] = {"matches": unplaced["matches"], "other": []}
 
     events = []
     for code, g in groups.items():
@@ -150,7 +160,8 @@ def cmd_event(a) -> int:
     for ev, g in events:
         if not a.no_compare:
             attach_comparison(ev, prev)
-        prev = strip_for_compare(ev)
+        if ev["averages"].get("n"):          # an event with no counted matches can't be a baseline
+            prev = strip_for_compare(ev)
         folder = os.path.join(a.out, re.sub(r"[^A-Za-z0-9_-]+", "_", ev["code"]))
         mdir = os.path.join(folder, "matches")
         links, series = {}, {}

@@ -46,6 +46,9 @@ class EventTest(unittest.TestCase):
         mk(a, "26-01-01_12-30-00", "AAA", 3, m1_amps=10.0, tele_end=TELE0 + 50)
         mk(a, "26-01-01_13-00-00", "AAA", 4, m1_amps=0.0)
         mk(a, "26-01-01_14-00-00", "AAA", 5, m1_amps=10.0, tele_end=TELE0 + 100)
+        # Q6 logged with no event name (robot rebooted mid-match): must still join AAA.
+        make_log(os.path.join(a, "akit_26-01-01_15-00-00_q6.wpilog"), event="", number=6, m1_amps=10.0,
+                 tele_end=TELE0 + 60)
         # Event BBB: three matches drawing 2 A more on motor 1, all with brownouts.
         for n in (1, 2, 3):
             mk(b, f"26-02-01_1{n}-00-00", "BBB", n, m1_amps=12.0, brownout_at=TELE0 + 100)
@@ -78,7 +81,8 @@ class EventTest(unittest.TestCase):
 
     def test_one_log_per_match(self):
         labels = [m["label"] for m in self.ev_a["matches"]]
-        self.assertEqual(labels, ["Q1", "Q2", "Q3", "Q4", "Q5"])
+        self.assertEqual(labels, ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"])
+        self.assertFalse(os.path.exists(os.path.join(self.out, "EVENT")))
         q3 = next(m for m in self.ev_a["matches"] if m["label"] == "Q3")
         self.assertEqual(q3["file"], "akit_26-01-01_12-00-00_aaa_q3.wpilog")
         self.assertEqual(len(q3["other_logs"]), 1)
