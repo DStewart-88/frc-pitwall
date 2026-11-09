@@ -54,8 +54,12 @@ def match_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
         "auto": span(T["auto"]), "teleop": span(T["teleop"]),
         "quarters": [span(q) for q in T["quarters"]],
         "state_s": T["state_s"],
+        "periods": [{k: x[k] for k in ("name", "s", "ah", "mean_a", "hub", "conditional", "state_s")}
+                    for x in T.get("periods") or []],
+        "hub_split": T.get("hub_split"), "alliance": T.get("alliance"), "game_data": T.get("game_data"),
         "brownout": {"episodes": B["episodes"], "onsets": B["onsets"],
                      "first_time_left_s": B["first_time_left_s"],
+                     "first_period": B.get("first_period"),
                      "episode_time_left": B["episode_time_left"],
                      "seconds_below_threshold": B["seconds_below_threshold"]},
         "subsystems": {s["id"]: {"ah": s["ah"], "wh": s["wh"], "mean_a": s["mean_a"],
@@ -144,6 +148,8 @@ def build_event(code: str, payloads: List[Dict[str, Any]], others: List[Dict[str
         "auto_s": profile.auto_s, "teleop_s": profile.teleop_s,
         "first_stamp": stamps[0] if stamps else "", "last_stamp": stamps[-1] if stamps else "",
         "subsystem_info": subs, "states": states,
+        "period_info": [{"name": x.name, "from_left": x.from_left, "to_left": x.to_left, "hub": x.hub}
+                        for x in profile.periods],
         "matches": matches, "counted": [m["label"] for m in counted],
         "averages": averages(counted, subs, states),
         "brownout": brownout_summary(counted),
@@ -176,6 +182,34 @@ def averages(ms: List[Dict[str, Any]], subs: List[Dict[str, Any]], states: List[
     a["quarters"] = [{k: _mean([m["quarters"][q][k] for m in ms]) for k in ("ah", "mean_a", "mean_w")}
                      for q in range(4)]
     a["state_s"] = {st: _mean([m["state_s"].get(st, 0.0) for m in ms]) for st in states}
+    # Game periods (2026 shifts), averaged by name over matches that had them
+    names: List[str] = []
+    for m in ms:
+        for x in m.get("periods", []):
+            if x["name"] not in names:
+                names.append(x["name"])
+    a["periods"] = []
+    for nm in names:
+        xs = [x for m in ms for x in m.get("periods", []) if x["name"] == nm and x["s"] > 0]
+        if not xs:
+            continue
+        on = [x for x in xs if x["hub"] is True]
+        off = [x for x in xs if x["hub"] is False]
+        a["periods"].append({
+            "name": nm, "n": len(xs), "s": _mean([x["s"] for x in xs]), "ah": _mean([x["ah"] for x in xs]),
+            "mean_a": _mean([x["mean_a"] for x in xs]),
+            "conditional": any(x.get("conditional") for x in xs),
+            "hub_active_n": len(on), "hub_inactive_n": len(off),
+            "mean_a_hub_active": _mean([x["mean_a"] for x in on]),
+            "mean_a_hub_inactive": _mean([x["mean_a"] for x in off]),
+            "state_s": {st: _mean([x["state_s"].get(st, 0.0) for x in xs]) for st in states},
+        })
+    hs = [m["hub_split"] for m in ms if m.get("hub_split")]
+    a["hub_split"] = None if not hs else {
+        "n": len(hs),
+        "active": {k: _mean([h["active"][k] for h in hs]) for k in ("s", "ah", "mean_a")},
+        "inactive": {k: _mean([h["inactive"][k] for h in hs]) for k in ("s", "ah", "mean_a")},
+    }
     total = a["ah"] or 0.0
     a["subsystems"] = {}
     for s in subs:
@@ -194,7 +228,13 @@ def averages(ms: List[Dict[str, Any]], subs: List[Dict[str, Any]], states: List[
 def brownout_summary(ms: List[Dict[str, Any]]) -> Dict[str, Any]:
     firsts = [m["brownout"]["first_time_left_s"] for m in ms if m["brownout"]["episodes"]]
     firsts_known = [f for f in firsts if f is not None]
+    by_period: Dict[str, int] = {}
+    for m in ms:
+        fp = m["brownout"].get("first_period") if m["brownout"]["episodes"] else None
+        if fp:
+            by_period[fp] = by_period.get(fp, 0) + 1
     return {
+        "first_by_period": by_period,
         "matches": len(ms),
         "with_brownout": len(firsts),
         "median_first_left_s": statistics.median(firsts_known) if firsts_known else None,
@@ -242,8 +282,21 @@ def _row(label, unit, nd, cur, prev, key) -> Dict[str, Any]:
 
 def compare(cur: Dict[str, Any], prev: Dict[str, Any]) -> Dict[str, Any]:
     A, P = cur["averages"], prev["averages"]
+    use_periods = bool(A.get("periods")) and bool(P.get("periods"))
     rows = [_row(label, unit, nd, _dig(A, path), _dig(P, path), ".".join(map(str, path)))
-            for path, label, unit, nd in METRICS]
+            for path, label, unit, nd in METRICS if not (use_periods and path[0] == "quarters")]
+    if use_periods:
+        pp = {x["name"]: x for x in P["periods"]}
+        for x in A["periods"]:
+            q = pp.get(x["name"])
+            rows.append(_row(f"Mean current, {x['name']}", "A", 0, x["mean_a"], q["mean_a"] if q else None,
+                             f"period.{x['name']}"))
+        ha, hp = A.get("hub_split"), P.get("hub_split")
+        if ha and hp:
+            rows.append(_row("Mean current, our hub active", "A", 0, ha["active"]["mean_a"],
+                             hp["active"]["mean_a"], "hub.active"))
+            rows.append(_row("Mean current, our hub inactive", "A", 0, ha["inactive"]["mean_a"],
+                             hp["inactive"]["mean_a"], "hub.inactive"))
     for st in cur["states"]:
         if st == "Other":
             continue
@@ -274,6 +327,7 @@ def compare(cur: Dict[str, Any], prev: Dict[str, Any]) -> Dict[str, Any]:
     if missing:
         notes.append(f"No {', '.join(missing)} figures at {prev['name']}.")
     return {"code": prev["code"], "name": prev["name"], "first_stamp": prev.get("first_stamp", ""),
+            "periods": {x["name"]: x for x in P.get("periods") or []}, "hub_split": P.get("hub_split"),
             "matches": P.get("n", 0), "rows": rows, "subsystems": sub_rows, "brownout": brown,
             "notes": notes}
 
@@ -319,6 +373,18 @@ def observations(ev: Dict[str, Any]) -> List[Dict[str, str]]:
                 f"Browned out in {B['with_brownout']} of {B['matches']} counted matches{when}.")
         else:
             add("info", "brownout", f"No brownouts in {B['matches']} counted matches.")
+        fbp = B.get("first_by_period") or {}
+        if fbp:
+            order_names = [x["name"] for x in ev["averages"].get("periods", [])]
+            parts = sorted(fbp.items(), key=lambda kv: order_names.index(kv[0]) if kv[0] in order_names else 99)
+            add("info", "brownout-shift", "The first brownout came in "
+                + ", ".join(f"{name} in {k} match{'es' if k != 1 else ''}" for name, k in parts) + ".")
+    hsp = ev["averages"].get("hub_split") if ev["averages"].get("n") else None
+    if hsp:
+        a_on, a_off = hsp["active"]["mean_a"], hsp["inactive"]["mean_a"]
+        add("info", "hub-split",
+            f"In the alliance shifts, the robot averaged {a_on:.0f} A while our hub was active and "
+            f"{a_off:.0f} A while it was inactive ({hsp['n']} matches).")
 
     C = ev.get("compare")
     if C:

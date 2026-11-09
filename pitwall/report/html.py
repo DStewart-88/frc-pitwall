@@ -20,6 +20,7 @@ PAPER = "#fafafb"
 INK_LINE = "#e1e5ed"
 INK_MUTED = "#5a6479"
 RED = "#bd1314"
+SHORT = {"Transition": "T"}   # labels that must fit narrow periods
 AREA_BIN_S = 1.0   # the stacked area shows 1 s averages; the hover read-out shows 0.1 s
 
 _FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
@@ -165,8 +166,18 @@ def timeline_svg(series: Dict[str, Any], subs: List[Dict[str, Any]]) -> str:
 
     out = [f'<svg viewBox="0 0 {width} {y2_top + h2 + 30}" class="chart" id="tl" role="img" '
            f'aria-label="Current by subsystem and battery voltage through the match">']
-    # auto shading
-    for b in series["blocks"]:
+    # game periods: inactive-hub shifts shaded, a thin line and a label at each period start
+    pers = series.get("periods") or []
+    for per in pers:
+        if per["hub"] is False:
+            out.append(f'<rect x="{X(per["start"]):.1f}" y="{top}" width="{X(per["end"]) - X(per["start"]):.1f}" '
+                       f'height="{y2_top + h2 - top}" fill="{NAVY}" opacity="0.06"/>')
+        out.append(f'<line x1="{X(per["start"]):.1f}" x2="{X(per["start"]):.1f}" y1="{top}" y2="{y2_top + h2}" '
+                   f'stroke="{INK_MUTED}" stroke-width="0.75" stroke-dasharray="2 3" opacity="0.6"/>')
+        short = SHORT.get(per["name"], per["name"])
+        out.append(f'<text x="{(X(per["start"]) + X(per["end"])) / 2:.1f}" y="{top + 12}" text-anchor="middle" '
+                   f'class="muted small">{esc(short)}</text>')
+    for b in ([] if pers else series["blocks"]):
         if b["mode"] == "auto":
             out.append(f'<rect x="{X(b["start"]):.1f}" y="{top}" width="{X(b["end"]) - X(b["start"]):.1f}" '
                        f'height="{y2_top + h2 - top}" fill="{NAVY}" opacity="0.05"/>'
@@ -247,6 +258,7 @@ table{border-collapse:collapse;width:100%;font-size:13.5px}
 th{text-align:left;font-family:Michroma,sans-serif;font-weight:400;font-size:10px;letter-spacing:.12em;text-transform:uppercase;padding:10px 10px;border-bottom:2px solid var(--navy);vertical-align:bottom}
 td{padding:8px 10px;border-bottom:1px solid var(--line)}
 .r{text-align:right} .num{font-variant-numeric:tabular-nums}
+tr.dim td{color:var(--muted)} tr.sum td{font-weight:700;border-top:2px solid var(--line)}
 .muted{color:var(--muted)} .small{font-size:11px}
 .flag{font-size:10px;font-family:Michroma,sans-serif;letter-spacing:.1em;color:#a96605;background:#fef0d8;border-radius:2px;padding:1px 5px;margin-left:4px}
 .obs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
@@ -309,8 +321,41 @@ def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str) -> 
     def prow(name: str, d: Dict[str, float]) -> str:
         return (f'<tr><td>{esc(name)}</td><td class="r num">{d["s"]:.0f} s</td><td class="r num">{d["ah"]:.2f}</td>'
                 f'<td class="r num">{d["mean_a"]:.0f}</td><td class="r num">{d["mean_w"]:,.0f}</td></tr>')
-    phase_rows = [prow("Auto", T["auto"]), prow("Teleop", T["teleop"])]
-    phase_rows += [prow(f"Quarter {k + 1}", q) for k, q in enumerate(T["quarters"])]
+    periods = [x for x in T.get("periods") or [] if x["s"] > 0]
+    shoot = next((st for st in T["state_s"] if st != "Other"), None)
+    if periods:
+        phase_title = "Through the match, by shift"
+        phase_head = ('<th>Period</th><th>Our hub</th><th class="r">Time</th><th class="r">Ah</th>'
+                      f'<th class="r">Mean A</th><th class="r">{esc(shoot or "")} s</th>')
+
+        def hub_txt(h):
+            return "Active" if h else ("Inactive" if h is False else "—")
+        phase_rows = []
+        for x in periods:
+            phase_rows.append(
+                f'<tr><td>{esc(x["name"])}</td><td>{hub_txt(x["hub"])}</td>'
+                f'<td class="r num">{x["s"]:.0f} s</td><td class="r num">{x["ah"]:.2f}</td>'
+                f'<td class="r num">{x["mean_a"]:.0f}</td>'
+                f'<td class="r num">{x["state_s"].get(shoot, 0):.0f}</td></tr>')
+        hs = T.get("hub_split")
+        if hs:
+            for key, lab in (("active", "Alliance shifts, our hub active"), ("inactive", "Alliance shifts, our hub inactive")):
+                d = hs[key]
+                phase_rows.append(f'<tr class="sum"><td colspan="2">{lab}</td><td class="r num">{d["s"]:.0f} s</td>'
+                                  f'<td class="r num">{d["ah"]:.2f}</td><td class="r num">{d["mean_a"]:.0f}</td><td></td></tr>')
+        names = {"R": "Red", "B": "Blue"}
+        if T.get("alliance") and T.get("game_data"):
+            phase_lead = (f'We were {names[T["alliance"]]}. {names[T["game_data"]]} scored more fuel in auto, so '
+                          f'{names[T["game_data"]]}\'s hub went inactive first.')
+        else:
+            phase_lead = "The log has no alliance or game data, so active and inactive shifts are unknown."
+    else:
+        phase_title = "Through the match"
+        phase_head = ('<th>Period</th><th class="r">Time</th><th class="r">Ah</th><th class="r">Mean A</th>'
+                      '<th class="r">Mean W</th>')
+        phase_rows = [prow("Auto", T["auto"]), prow("Teleop", T["teleop"])]
+        phase_rows += [prow(f"Quarter {k + 1}", q) for k, q in enumerate(T["quarters"])]
+        phase_lead = "Quarters split the enabled time into four equal parts."
 
     sub_name = {s["id"]: s["name"] for s in subs}
     sub_color = {s["id"]: s["color"] for s in subs}
@@ -356,6 +401,7 @@ def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str) -> 
         returned=f"{ret:.2f}", legend=legend,
         timeline=timeline_svg(result["series"], subs),
         st_head=st_head, st_rows="".join(st_rows), phase_rows="".join(phase_rows),
+        phase_title=esc(phase_title), phase_head=phase_head, phase_lead=esc(phase_lead),
         motor_rows="".join(mrows), observations=obs, mode_note=esc(mode_note),
         enabled_s=f'{T["enabled_s"]:.0f}', tl_data=tl_data,
     )
@@ -387,7 +433,7 @@ PAGE = """<!doctype html>
 
 <section class="card">
 <h2>Current through the match</h2>
-<p class="lead">Supply current by subsystem (1 s averages), stacked, with battery voltage below. Red ticks mark brownouts. Hover for 0.1 s values.</p>
+<p class="lead">Supply current by subsystem (1 s averages), stacked, with battery voltage below. Red ticks mark brownouts. Shaded shifts are the ones where our hub was inactive. Hover for 0.1 s values.</p>
 <div class="legend">{legend}</div>
 {timeline}
 </section>
@@ -397,9 +443,9 @@ PAGE = """<!doctype html>
 <p class="lead">Charge (Ah) by subsystem and robot state. Idle is charge used outside the states a subsystem is needed in.</p>
 <div class="scroll"><table><thead><tr><th>Subsystem</th>{st_head}<th class="r">Total</th><th class="r">Idle</th></tr></thead>
 <tbody>{st_rows}</tbody></table></div></section>
-<section class="card"><h2>Through the match</h2>
-<p class="lead">Quarters split the enabled time into four equal parts.</p>
-<div class="scroll"><table><thead><tr><th>Period</th><th class="r">Time</th><th class="r">Ah</th><th class="r">Mean A</th><th class="r">Mean W</th></tr></thead>
+<section class="card"><h2>{phase_title}</h2>
+<p class="lead">{phase_lead}</p>
+<div class="scroll"><table><thead><tr>{phase_head}</tr></thead>
 <tbody>{phase_rows}</tbody></table></div></section>
 </div>
 

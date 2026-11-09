@@ -7,7 +7,7 @@ readable with JavaScript off. Match names link to the match reports next to it.
 import datetime
 from typing import Any, Dict, List, Optional
 
-from .html import INK_LINE, NAVY, RED, _bar_path, base_css, color_for, esc
+from .html import INK_LINE, NAVY, RED, SHORT, _bar_path, base_css, color_for, esc
 
 PREV_GREY = "#b4bccb"
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -158,7 +158,7 @@ def brownout_svg(ev: Dict[str, Any], series_by_label: Dict[str, Dict[str, Any]],
     auto_s, teleop_s = ev["auto_s"], ev["teleop_s"]
     total = auto_s + teleop_s
     ms = [m for m in ev["matches"]]
-    label_w, right_w, row_h, top = 150, 230, 44, 22
+    label_w, right_w, row_h, top = 150, 290, 44, 22
     width = 1100
     plot_w = width - label_w - right_w - 16
     height = top + len(ms) * row_h + 30
@@ -168,14 +168,22 @@ def brownout_svg(ev: Dict[str, Any], series_by_label: Dict[str, Dict[str, Any]],
 
     out = [f'<svg viewBox="0 0 {width} {height}" class="chart" role="img" '
            f'aria-label="Battery voltage and brownouts in each match, by match time left">']
-    out.append(f'<rect x="{X(total):.1f}" y="{top - 4}" width="{X(teleop_s) - X(total):.1f}" '
-               f'height="{len(ms) * row_h + 4}" fill="{NAVY}" opacity="0.05"/>'
-               f'<text x="{X(total) + 6:.1f}" y="{top - 8}" class="muted small">AUTO</text>')
-    for left in range(int(total), -1, -20):
+    pinfo = ev.get("period_info") or []
+    if pinfo:
+        edges = sorted({p["from_left"] for p in pinfo} | {p["to_left"] for p in pinfo}, reverse=True)
+        for p in pinfo:
+            out.append(f'<text x="{(X(p["from_left"]) + X(p["to_left"])) / 2:.1f}" y="{top - 8}" text-anchor="middle" '
+                       f'class="muted small">{esc(SHORT.get(p["name"], p["name"]))}</text>')
+    else:
+        edges = list(range(int(total), -1, -20))
+        out.append(f'<rect x="{X(total):.1f}" y="{top - 4}" width="{X(teleop_s) - X(total):.1f}" '
+                   f'height="{len(ms) * row_h + 4}" fill="{NAVY}" opacity="0.05"/>'
+                   f'<text x="{X(total) + 6:.1f}" y="{top - 8}" class="muted small">AUTO</text>')
+    for left in edges:
         out.append(f'<line x1="{X(left):.1f}" x2="{X(left):.1f}" y1="{top - 4}" y2="{top + len(ms) * row_h}" '
                    f'stroke="{INK_LINE}"/>'
                    f'<text x="{X(left):.1f}" y="{top + len(ms) * row_h + 16}" text-anchor="middle" '
-                   f'class="muted small">{left}</text>')
+                   f'class="muted small">{left:g}</text>')
     out.append(f'<text x="{label_w + plot_w}" y="{top + len(ms) * row_h + 28}" text-anchor="end" '
                f'class="muted small">seconds left in the match</text>')
     vlo, vhi = 5.0, 13.0
@@ -187,6 +195,12 @@ def brownout_svg(ev: Dict[str, Any], series_by_label: Dict[str, Dict[str, Any]],
             v = min(max(v, vlo), vhi)
             return y0 + row_h - 6 - (v - vlo) / (vhi - vlo) * (row_h - 12)
 
+        pbn = {p["name"]: p for p in pinfo}
+        for per in m.get("periods", []):
+            if per["hub"] is False and per["name"] in pbn:
+                p = pbn[per["name"]]
+                out.append(f'<rect x="{X(p["from_left"]):.1f}" y="{y0 + 1}" width="{X(p["to_left"]) - X(p["from_left"]):.1f}" '
+                           f'height="{row_h - 2}" fill="{NAVY}" opacity="0.07"/>')
         href = links.get(m["label"])
         lab = esc(m["label"])
         out.append(f'<a href="{esc(href)}"><text x="{label_w - 12}" y="{y0 + row_h / 2 + 5}" text-anchor="end" '
@@ -217,7 +231,8 @@ def brownout_svg(ev: Dict[str, Any], series_by_label: Dict[str, Dict[str, Any]],
         first = B["first_time_left_s"]
         if B["episodes"] and first is not None:
             out.append(f'<circle cx="{X(first):.1f}" cy="{y0 + 5}" r="4" fill="{RED}" opacity="{op}"/>')
-            txt = (f'<tspan class="num">{first:.1f} s left</tspan><tspan class="muted"> at first · '
+            where = f' ({esc(B["first_period"])})' if B.get("first_period") else ""
+            txt = (f'<tspan class="num">{first:.1f} s left</tspan><tspan class="muted">{where} · '
                    f'{B["episodes"]} episode{"s" if B["episodes"] != 1 else ""}</tspan>')
         else:
             txt = '<tspan class="muted">No brownout</tspan>'
@@ -254,6 +269,58 @@ def subsystem_compare_svg(C: Dict[str, Any]) -> str:
                    f'{fmt_pct(r["pct"])}</tspan></text></g>')
     out.append("</svg>")
     return "".join(out)
+
+
+# ---------------------------------------------------------------- shifts
+
+def shift_card_html(ev: Dict[str, Any], shoot: Optional[str]) -> str:
+    A, C = ev["averages"], ev.get("compare")
+    prev = (C or {}).get("periods") or {}
+    head = ('<th>Period</th><th class="r">Length</th><th class="r">Mean A</th><th class="r">Ah</th>'
+            f'<th class="r">{esc(shoot or "")} s</th>'
+            '<th class="r">Mean A,<br>our hub active</th><th class="r">Mean A,<br>our hub inactive</th>')
+    if C:
+        head += f'<th class="r">{esc(C["name"])}<br>mean A</th><th class="r">Change</th>'
+
+    def cnt(v: Optional[float], k: int) -> str:
+        return "—" if v is None or not k else f'{v:.0f} <span class="muted small">({k})</span>'
+    rows = []
+    for x in A["periods"]:
+        cells = (f'<td>{esc(x["name"])}</td><td class="r num">{fmt(x["s"], 0, "s")}</td>'
+                 f'<td class="r num">{fmt(x["mean_a"], 0)}</td>'
+                 f'<td class="r num">{fmt(x["ah"], 2)}</td>'
+                 f'<td class="r num">{fmt(x["state_s"].get(shoot), 0) if shoot else "—"}</td>')
+        if x["conditional"]:
+            cells += (f'<td class="r num">{cnt(x["mean_a_hub_active"], x["hub_active_n"])}</td>'
+                      f'<td class="r num">{cnt(x["mean_a_hub_inactive"], x["hub_inactive_n"])}</td>')
+        else:
+            cells += '<td class="r muted small">always active</td><td></td>'
+        if C:
+            q = prev.get(x["name"])
+            pv = q["mean_a"] if q else None
+            d = (x["mean_a"] - pv) if (pv is not None and x["mean_a"] is not None) else None
+            cells += (f'<td class="r num">{fmt(pv, 0)}</td><td class="r num">{fmt_delta(d, 0, "A")} '
+                      f'<span class="muted">{fmt_pct(d / pv if d is not None and pv else None)}</span></td>')
+        rows.append(f"<tr>{cells}</tr>")
+    hs = A.get("hub_split")
+    if hs:
+        phs = (C or {}).get("hub_split")
+        for key, lab in (("active", "All alliance shifts, our hub active"),
+                         ("inactive", "All alliance shifts, our hub inactive")):
+            d = hs[key]
+            cells = (f'<td>{lab}</td><td class="r num">{fmt(d["s"], 0, "s")}</td><td class="r num">{fmt(d["mean_a"], 0)}</td><td class="r num">{fmt(d["ah"], 2)}</td>'
+                     '<td></td><td></td><td></td>')
+            if C:
+                pv = phs[key]["mean_a"] if phs else None
+                dd = (d["mean_a"] - pv) if pv is not None else None
+                cells += (f'<td class="r num">{fmt(pv, 0)}</td><td class="r num">{fmt_delta(dd, 0, "A")} '
+                          f'<span class="muted">{fmt_pct(dd / pv if dd is not None and pv else None)}</span></td>')
+            rows.append(f'<tr class="sum">{cells}</tr>')
+    return (f'<section class="card"><h2>By shift</h2><p class="lead">Average per counted match. In the shifts where our '
+            f'hub can be active or inactive, the two right-hand columns split the matches by which it was '
+            f'(number of matches in brackets).</p>'
+            f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
+            f'</section>')
 
 
 # ---------------------------------------------------------------- page
@@ -311,6 +378,8 @@ def render_event(ev: Dict[str, Any], series_by_label: Dict[str, Dict[str, Any]],
         lab = f'<a href="{esc(href)}">{esc(m["label"])}</a>' if href else esc(m["label"])
         Bm = m["brownout"]
         first = fmt(Bm["first_time_left_s"], 1) if Bm["episodes"] else "—"
+        if Bm["episodes"] and Bm.get("first_period"):
+            first += f' <span class="muted small">{esc(Bm["first_period"])}</span>'
         status = ("Counted" + (" (by hand)" if m.get("included_by_hand") else "")) if m["counted"] \
             else f'<span class="muted">{esc(m["why_not"])}</span>'
         extra = f' <span class="flag">{len(m["other_logs"]) + 1} logs</span>' if m.get("other_logs") else ""
@@ -348,6 +417,8 @@ def render_event(ev: Dict[str, Any], series_by_label: Dict[str, Dict[str, Any]],
     if C:
         crow = []
         for r in C["rows"]:
+            if r["key"].startswith(("period.", "hub.")):
+                continue
             crow.append(f'<tr><td>{esc(r["label"])}</td><td class="r num">{fmt(r["cur"], r["nd"], r["unit"])}</td>'
                         f'<td class="r num">{fmt(r["prev"], r["nd"], r["unit"])}</td>'
                         f'<td class="r num">{fmt_delta(r["delta"], r["nd"], r["unit"])} '
@@ -380,11 +451,13 @@ For time left at first brownout, a bigger number means the battery gave out earl
         for q in range(4):
             phase.append(prow(f"Quarter {q + 1}", A["quarters"][q]["mean_a"], f"quarters.{q}.mean_a"))
     p_head = '<th>Period</th><th class="r">Mean A</th>'
-    phase_card = "" if (C or not n) else (
+    phase_card = "" if (C or not n or A.get("periods")) else (
         '<section class="card"><h2>Through the match</h2><p class="lead">Average current per period. '
         "Quarters split each match's enabled time into four equal parts.</p>"
         f'<div class="scroll"><table class="narrow"><thead><tr>{p_head}</tr></thead>'
         f'<tbody>{"".join(phase)}</tbody></table></div></section>')
+
+    shift_card = shift_card_html(ev, shoot) if n and A.get("periods") else ""
 
     sev_label = {"act": "Act", "watch": "Watch", "info": "Info"}
     obs = "".join(f'<li><span class="sev {o["severity"]}">{sev_label[o["severity"]]}</span>{esc(o["text"])}</li>'
@@ -416,7 +489,8 @@ For time left at first brownout, a bigger number means the battery gave out earl
         brownout_chart=brownout_svg(ev, series_by_label, links),
         match_rows="".join(mrows), shoot_head=esc(shoot or "—"),
         s_head=s_head, sub_rows="".join(srows), compare=compare_html,
-        phase_card=phase_card, observations=obs, other=other,
+        phase_card=phase_card, shift_card=shift_card, observations=obs,
+        shade_note=("Grey shading marks the shifts where our hub was inactive." if ev.get("period_info") else ""), other=other,
         mode_note=esc(mode_note),
     )
 
@@ -425,7 +499,7 @@ EXTRA_CSS = """
 .chart .link{fill:#0b4fa8;text-decoration:underline}
 .chart a:hover .link{fill:var(--navy)}
 td a{color:#0b4fa8} tr.dim td{color:var(--muted)}
-td.r{white-space:nowrap} table.narrow{max-width:760px}
+td.r{white-space:nowrap} tr.sum td{font-weight:700;border-top:2px solid var(--line)} table.narrow{max-width:760px}
 h3{margin:18px 0 6px;font-family:Michroma,sans-serif;font-weight:400;font-size:12px;letter-spacing:.08em}
 ul.plain{margin:0;padding-left:18px;font-size:14px;display:flex;flex-direction:column;gap:4px}
 """
@@ -455,9 +529,11 @@ PAGE = """<!doctype html>
 </section>
 
 <section class="card"><h2>When the battery gave out</h2>
-<p class="lead">Battery voltage through each match, lined up by match time left. Red marks are brownouts (below 6.75 V the roboRIO cuts motor output); the dot is the first.</p>
+<p class="lead">Battery voltage through each match, lined up by match time left. Red marks are brownouts (below 6.75 V the roboRIO cuts motor output); the dot is the first. {shade_note}</p>
 {brownout_chart}
 </section>
+
+{shift_card}
 
 {compare}
 
