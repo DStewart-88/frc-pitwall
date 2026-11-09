@@ -308,8 +308,9 @@ def donut_svg(parts: List[Dict[str, Any]], total: float, title: str, sub: str, w
         share = v / pos
         out.append(f'<path class="seg" d="{_arc(c, c, r_out, r_in, a, a + span)}" fill="{color_for(p["color"])}" '
                    f'stroke="#ffffff" stroke-width="2" stroke-linejoin="round" data-sub="{esc(p["id"])}" '
-                   f'data-name="{esc(p["name"])}" data-ah="{v:.2f}" data-pct="{share * 100:.0f}" data-which="{esc(which)}">'
-                   f'<title>{esc(p["name"])}: {v:.2f} Ah per match, {share:.0%} of the total ({esc(title)})</title></path>')
+                   f'data-name="{esc(p["name"])}" data-ah="{v:.2f}" data-pct="{share * 100:.0f}" data-which="{esc(which)}" '
+                   # aria-label, not <title>: a <title> would pop up the browser's own tooltip over ours
+                   f'aria-label="{esc(p["name"])}: {v:.2f} Ah per match, {share:.0%} of the total ({esc(title)})"/>')
         a += span
     out.append(f'<text x="{c}" y="{c - 4}" text-anchor="middle" class="dn-big">{total:.2f}</text>'
                f'<text x="{c}" y="{c + 16}" text-anchor="middle" class="dn-small">Ah per match</text></svg>')
