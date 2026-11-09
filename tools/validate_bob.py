@@ -7,17 +7,14 @@ numbers; then it prints the corrected (signed) figures for comparison.
 Usage: python3 tools/validate_bob.py <folder with the BOB .wpilog files>
 """
 
-import glob
 import os
-import statistics
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from pitwall import power                      # noqa: E402
-from pitwall.match import SkipLog, build_match          # noqa: E402
-from pitwall.profile import load_profile       # noqa: E402
-from pitwall.wpilog import WPILog              # noqa: E402
+from pitwall.analysis import analyze_logs, expand_paths   # noqa: E402
+from pitwall.event import build_event                    # noqa: E402
+from pitwall.profile import load_profile                 # noqa: E402
 
 PROFILE = os.path.join(os.path.dirname(__file__), "..", "profiles", "2026-comp.toml")
 
@@ -31,6 +28,7 @@ REVIEW = {
 REVIEW_EVENT = {
     "wh": 52.0, "ah": 5.51, "mean_w": 1171, "mean_a": 124, "auto_w": 1172, "teleop_w": 1171,
     "peak_1s_w": 2149, "p95_a": 237, "quarters_w": (1268, 1415, 1338, 666), "episodes": 16,
+    "shooting_s": 74, "matches_with_brownout": 3, "median_first_left_s": 31.6,
     "groups_wh": {"drive": 24.4, "steer": 2.9, "shooter": 6.0, "feeder": 6.3, "floor": 3.7,
                   "intake": 6.8, "aim": 2.0},
 }
@@ -41,17 +39,14 @@ def close(a, b, rel=0.01, absol=0.0):
 
 
 def run(folder, mode):
+    """Per-match results by label, and the event roll-up, the way `pitwall event` makes them."""
+    results = analyze_logs(expand_paths([folder]), PROFILE, mode, cache_dir=None)
+    payloads = [r["ok"] for r in results if "ok" in r]
     p = load_profile(PROFILE)
     p.current_mode = mode
-    out = {}
-    for path in sorted(glob.glob(os.path.join(folder, "*.wpilog"))):
-        try:
-            m = build_match(WPILog(path), p)
-        except SkipLog:
-            continue
-        if m.identity.label in REVIEW:
-            out[m.identity.label] = power.analyze(m)
-    return out
+    fms = [x for x in payloads if x["identity"]["is_fms"]]
+    ev = build_event("NHALT", fms, [], p)
+    return {x["identity"]["label"]: x["power"] for x in fms}, ev
 
 
 def main(folder):
@@ -63,7 +58,7 @@ def main(folder):
         fails += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'FAIL'} {name:28s} pitwall {got:10.3f}   review {want}")
 
-    res = run(folder, "abs")
+    res, ev = run(folder, "abs")
     missing = set(REVIEW) - set(res)
     if missing:
         print(f"missing logs for {sorted(missing)}")
@@ -84,25 +79,29 @@ def main(folder):
         # Pitwall counts onsets on the raw signal; the review counted them on the 20 ms grid,
         # which merges two onsets less than 20 ms apart (Q14 has one such pair).
         check("brownout onsets", B["onsets"], onsets, absol=1)
-    print(" Event averages")
-    rs = list(res.values())
-    avg = lambda f: statistics.mean(f(r) for r in rs)   # noqa: E731
+    print(" Event (pitwall event roll-up)")
     E = REVIEW_EVENT
-    check("energy Wh", avg(lambda r: r["totals"]["wh"]), E["wh"], absol=0.05)
-    check("charge Ah", avg(lambda r: r["totals"]["ah"]), E["ah"], absol=0.01)
-    check("mean power W", avg(lambda r: r["totals"]["mean_w"]), E["mean_w"], absol=1)
-    check("mean current A", avg(lambda r: r["totals"]["mean_a"]), E["mean_a"], absol=0.5)
-    check("auto mean power W", avg(lambda r: r["totals"]["auto"]["mean_w"]), E["auto_w"], absol=1)
-    check("teleop mean power W", avg(lambda r: r["totals"]["teleop"]["mean_w"]), E["teleop_w"], absol=1)
-    check("peak 1 s power W", avg(lambda r: r["totals"]["peak_1s_w"]), E["peak_1s_w"], rel=0.015)
-    check("95th pct current A", avg(lambda r: r["totals"]["p95_a"]), E["p95_a"], absol=1)
+    A = ev["averages"]
+    check("matches counted (Q2 left out)", A["n"], 3, rel=0)
+    check("energy Wh", A["wh"], E["wh"], absol=0.05)
+    check("charge Ah", A["ah"], E["ah"], absol=0.01)
+    check("mean power W", A["mean_w"], E["mean_w"], absol=1)
+    check("mean current A", A["mean_a"], E["mean_a"], absol=0.5)
+    check("auto mean power W", A["auto"]["mean_w"], E["auto_w"], absol=1)
+    check("teleop mean power W", A["teleop"]["mean_w"], E["teleop_w"], absol=1)
+    check("peak 1 s power W", A["peak_1s_w"], E["peak_1s_w"], rel=0.015)
+    check("95th pct current A", A["p95_a"], E["p95_a"], absol=1)
     for k, want in enumerate(E["quarters_w"]):
-        check(f"quarter {k + 1} mean power W", avg(lambda r: r["totals"]["quarters"][k]["mean_w"]), want, absol=2)
-    check("brownout episodes (total)", sum(r["brownout"]["episodes"] for r in rs), E["episodes"], rel=0)
+        check(f"quarter {k + 1} mean power W", A["quarters"][k]["mean_w"], want, absol=2)
+    check("time shooting s", A["state_s"]["Shooting"], E["shooting_s"], absol=1)
     for gid, want in E["groups_wh"].items():
-        check(f"{gid} Wh", avg(lambda r: next(s["wh"] for s in r["subsystems"] if s["id"] == gid)), want, absol=0.05)
+        check(f"{gid} Wh", A["subsystems"][gid]["wh"], want, absol=0.05)
+    B = ev["brownout"]
+    check("brownout episodes (total)", B["episodes_total"], E["episodes"], rel=0)
+    check("matches with a brownout", B["with_brownout"], E["matches_with_brownout"], rel=0)
+    check("median s left at first brownout", B["median_first_left_s"], E["median_first_left_s"], absol=0.15)
 
-    signed = run(folder, "signed")
+    signed, _ = run(folder, "signed")
     print("\nCorrected (signed) figures, braking current subtracted:")
     for label in REVIEW:
         T = signed[label]["totals"]

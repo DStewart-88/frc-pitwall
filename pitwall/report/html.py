@@ -211,6 +211,61 @@ def timeline_svg(series: Dict[str, Any], subs: List[Dict[str, Any]]) -> str:
 
 # ---------------------------------------------------------------- page
 
+BASE_CSS = """*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--navy);font:15px/1.5 Arial,"Helvetica Neue",Helvetica,sans-serif}
+.disp{font-family:Michroma,Eurostile,"Bank Gothic",sans-serif;font-weight:400}
+header{background:var(--navy);border-bottom:3px solid var(--gold);color:#fafafb}
+header .in{max-width:1200px;margin:0 auto;padding:14px 32px;display:flex;flex-wrap:wrap;gap:8px 24px;align-items:baseline;justify-content:space-between}
+header .brand{font-family:Michroma,sans-serif;font-size:13px;letter-spacing:.14em}
+header .brand b{color:var(--gold);font-weight:400}
+header .meta{font-size:13px;color:#d3dae8}
+main{max-width:1200px;margin:0 auto;padding:28px 32px 64px;display:flex;flex-direction:column;gap:24px}
+h1{margin:0;font-family:Michroma,sans-serif;font-weight:400;font-size:30px;line-height:1.2}
+h2{margin:0 0 4px;font-family:Michroma,sans-serif;font-weight:400;font-size:16px}
+.eyebrow{margin:0 0 6px;font-family:Michroma,sans-serif;font-size:11px;letter-spacing:.22em;color:var(--red);text-transform:uppercase}
+.card{background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:0 2px 6px rgba(1,25,69,.10);padding:22px 24px}
+.lead{margin:0 0 14px;color:var(--muted);font-size:14px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px}
+.stat{background:#fff;border:1px solid var(--line);border-top:4px solid var(--gold);border-radius:6px;padding:16px 18px}
+.stat .big{font-size:26px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
+.stat .lab{font-family:Michroma,sans-serif;font-size:10px;letter-spacing:.14em;text-transform:uppercase;margin-top:6px}
+.stat .sub{font-size:13px;color:var(--muted)}
+.chart{width:100%;height:auto;display:block;font:13px Arial,sans-serif}
+.chart .lbl{fill:var(--navy);font-weight:700} .chart .val{fill:var(--navy)} .chart .num{font-weight:700}
+.chart .muted{fill:var(--muted)} .chart .small{font-size:11px}
+.chart .hov:hover rect:first-child{fill:rgba(1,25,69,.04)}
+.row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.seg{display:inline-flex;border:2px solid var(--navy);border-radius:4px;overflow:hidden}
+.seg button{min-height:36px;min-width:56px;border:0;background:#fff;color:var(--navy);font:12px Michroma,sans-serif;letter-spacing:.14em;cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--navy);color:#fafafb}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;margin:4px 0 10px}
+.key i,.sw{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.tip{position:fixed;pointer-events:none;background:#fff;border:1px solid var(--line);border-radius:4px;box-shadow:0 6px 18px rgba(1,25,69,.12);padding:8px 10px;font-size:12px;display:none;z-index:5;min-width:170px}
+.tip .r{display:flex;justify-content:space-between;gap:12px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th{text-align:left;font-family:Michroma,sans-serif;font-weight:400;font-size:10px;letter-spacing:.12em;text-transform:uppercase;padding:10px 10px;border-bottom:2px solid var(--navy);vertical-align:bottom}
+td{padding:8px 10px;border-bottom:1px solid var(--line)}
+.r{text-align:right} .num{font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)} .small{font-size:11px}
+.flag{font-size:10px;font-family:Michroma,sans-serif;letter-spacing:.1em;color:#a96605;background:#fef0d8;border-radius:2px;padding:1px 5px;margin-left:4px}
+.obs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.obs li{display:flex;gap:12px;align-items:flex-start;font-size:14px}
+.sev{flex:0 0 64px;text-align:center;font-family:Michroma,sans-serif;font-size:10px;letter-spacing:.14em;text-transform:uppercase;border-radius:2px;padding:3px 0}
+.sev.act{background:#fbeaea;color:var(--red)} .sev.watch{background:#fef0d8;color:#a96605} .sev.info{background:#edf0f6;color:#0b2a61}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:24px}
+footer{font-size:12px;color:var(--muted);line-height:1.6}
+@media print{.seg,.tip{display:none!important} .card{box-shadow:none}}
+"""
+
+
+def base_css() -> str:
+    """Fonts, colors and components shared by every Pitwall page."""
+    return (_font_face() + "\n"
+            f":root{{--navy:{NAVY};--gold:{GOLD};--paper:{PAPER};--line:{INK_LINE};--muted:{INK_MUTED};--red:{RED}}}\n"
+            + BASE_CSS)
+
+
 def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str) -> str:
     T = result["totals"]
     B = result["brownout"]
@@ -292,7 +347,7 @@ def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str) -> 
     }, separators=(",", ":"))
 
     return PAGE.format(
-        font=_font_face(), title=esc(title), event=esc(ident.get("event") or "Practice"),
+        css=base_css(), title=esc(title), event=esc(ident.get("event") or "Practice"),
         label=esc(ident["label"]), file=esc(ident["file"]), build=esc(build or "unknown"),
         branch=esc(ident.get("git_branch", "")), profile=esc(profile_name),
         stats=stat_html,
@@ -303,7 +358,6 @@ def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str) -> 
         st_head=st_head, st_rows="".join(st_rows), phase_rows="".join(phase_rows),
         motor_rows="".join(mrows), observations=obs, mode_note=esc(mode_note),
         enabled_s=f'{T["enabled_s"]:.0f}', tl_data=tl_data,
-        navy=NAVY, gold=GOLD, paper=PAPER, line=INK_LINE, muted=INK_MUTED, red=RED,
     )
 
 
@@ -314,53 +368,7 @@ PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} · Pitwall power report</title>
 <style>
-{font}
-:root{{--navy:{navy};--gold:{gold};--paper:{paper};--line:{line};--muted:{muted};--red:{red}}}
-*{{box-sizing:border-box}}
-body{{margin:0;background:var(--paper);color:var(--navy);font:15px/1.5 Arial,"Helvetica Neue",Helvetica,sans-serif}}
-.disp{{font-family:Michroma,Eurostile,"Bank Gothic",sans-serif;font-weight:400}}
-header{{background:var(--navy);border-bottom:3px solid var(--gold);color:#fafafb}}
-header .in{{max-width:1200px;margin:0 auto;padding:14px 32px;display:flex;flex-wrap:wrap;gap:8px 24px;align-items:baseline;justify-content:space-between}}
-header .brand{{font-family:Michroma,sans-serif;font-size:13px;letter-spacing:.14em}}
-header .brand b{{color:var(--gold);font-weight:400}}
-header .meta{{font-size:13px;color:#d3dae8}}
-main{{max-width:1200px;margin:0 auto;padding:28px 32px 64px;display:flex;flex-direction:column;gap:24px}}
-h1{{margin:0;font-family:Michroma,sans-serif;font-weight:400;font-size:30px;line-height:1.2}}
-h2{{margin:0 0 4px;font-family:Michroma,sans-serif;font-weight:400;font-size:16px}}
-.eyebrow{{margin:0 0 6px;font-family:Michroma,sans-serif;font-size:11px;letter-spacing:.22em;color:var(--red);text-transform:uppercase}}
-.card{{background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:0 2px 6px rgba(1,25,69,.10);padding:22px 24px}}
-.lead{{margin:0 0 14px;color:var(--muted);font-size:14px}}
-.stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px}}
-.stat{{background:#fff;border:1px solid var(--line);border-top:4px solid var(--gold);border-radius:6px;padding:16px 18px}}
-.stat .big{{font-size:26px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}}
-.stat .lab{{font-family:Michroma,sans-serif;font-size:10px;letter-spacing:.14em;text-transform:uppercase;margin-top:6px}}
-.stat .sub{{font-size:13px;color:var(--muted)}}
-.chart{{width:100%;height:auto;display:block;font:13px Arial,sans-serif}}
-.chart .lbl{{fill:var(--navy);font-weight:700}} .chart .val{{fill:var(--navy)}} .chart .num{{font-weight:700}}
-.chart .muted{{fill:var(--muted)}} .chart .small{{font-size:11px}}
-.chart .hov:hover rect:first-child{{fill:rgba(1,25,69,.04)}}
-.row{{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}}
-.seg{{display:inline-flex;border:2px solid var(--navy);border-radius:4px;overflow:hidden}}
-.seg button{{min-height:36px;min-width:56px;border:0;background:#fff;color:var(--navy);font:12px Michroma,sans-serif;letter-spacing:.14em;cursor:pointer}}
-.seg button[aria-pressed=true]{{background:var(--navy);color:#fafafb}}
-.legend{{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;margin:4px 0 10px}}
-.key i,.sw{{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:6px;vertical-align:-1px}}
-.tip{{position:fixed;pointer-events:none;background:#fff;border:1px solid var(--line);border-radius:4px;box-shadow:0 6px 18px rgba(1,25,69,.12);padding:8px 10px;font-size:12px;display:none;z-index:5;min-width:170px}}
-.tip .r{{display:flex;justify-content:space-between;gap:12px}}
-.scroll{{overflow-x:auto}}
-table{{border-collapse:collapse;width:100%;font-size:13.5px}}
-th{{text-align:left;font-family:Michroma,sans-serif;font-weight:400;font-size:10px;letter-spacing:.12em;text-transform:uppercase;padding:10px 10px;border-bottom:2px solid var(--navy);vertical-align:bottom}}
-td{{padding:8px 10px;border-bottom:1px solid var(--line)}}
-.r{{text-align:right}} .num{{font-variant-numeric:tabular-nums}}
-.muted{{color:var(--muted)}} .small{{font-size:11px}}
-.flag{{font-size:10px;font-family:Michroma,sans-serif;letter-spacing:.1em;color:#a96605;background:#fef0d8;border-radius:2px;padding:1px 5px;margin-left:4px}}
-.obs{{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}}
-.obs li{{display:flex;gap:12px;align-items:flex-start;font-size:14px}}
-.sev{{flex:0 0 64px;text-align:center;font-family:Michroma,sans-serif;font-size:10px;letter-spacing:.14em;text-transform:uppercase;border-radius:2px;padding:3px 0}}
-.sev.act{{background:#fbeaea;color:var(--red)}} .sev.watch{{background:#fef0d8;color:#a96605}} .sev.info{{background:#edf0f6;color:#0b2a61}}
-.grid2{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:24px}}
-footer{{font-size:12px;color:var(--muted);line-height:1.6}}
-@media print{{.seg,.tip{{display:none!important}} .card{{box-shadow:none}}}}
+{css}
 </style>
 </head>
 <body>

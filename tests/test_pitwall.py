@@ -49,11 +49,12 @@ name = "Control system"
 AUTO0, AUTO1, TELE0, TELE1 = 10.0, 30.0, 33.0, 173.0
 
 
-def make_log(path, brownout_at=None, m1_connected=True, extra_key=False):
+def make_log(path, brownout_at=None, m1_connected=True, extra_key=False, event="TEST", match_type=2,
+             number=12, m1_amps=10.0, tele_end=TELE1):
     w = LogWriter(path)
-    w.put("/DriverStation/EventName", 0.0, "TEST")
-    w.put("/DriverStation/MatchType", 0.0, 2)
-    w.put("/DriverStation/MatchNumber", 0.0, 12)
+    w.put("/DriverStation/EventName", 0.0, event)
+    w.put("/DriverStation/MatchType", 0.0, match_type)
+    w.put("/DriverStation/MatchNumber", 0.0, number)
     w.put("/DriverStation/Enabled", 0.0, False)
     w.put("/DriverStation/Autonomous", 0.0, False)
     w.put("/SystemStats/BrownedOut", 0.0, False)
@@ -64,7 +65,7 @@ def make_log(path, brownout_at=None, m1_connected=True, extra_key=False):
     w.put("/DriverStation/Enabled", AUTO1, False)
     w.put("/DriverStation/Autonomous", TELE0, False)
     w.put("/DriverStation/Enabled", TELE0, True)
-    w.put("/DriverStation/Enabled", TELE1, False)
+    w.put("/DriverStation/Enabled", tele_end, False)
     w.put("/Shooting", TELE0 + 100, True)
     w.put("/Shooting", TELE0 + 120, False)
     mid = TELE0 + 60
@@ -74,8 +75,8 @@ def make_log(path, brownout_at=None, m1_connected=True, extra_key=False):
         # tiny alternating offset so AdvantageKit-style "log on change" still logs every sample
         e = 1e-9 * (k % 2)
         w.put("/SystemStats/BatteryVoltage", t, 12.0 + e)
-        w.put("/M1/SupplyCurrent", t, 10.0 + e)
-        on = AUTO0 <= t < AUTO1 or TELE0 <= t < TELE1
+        w.put("/M1/SupplyCurrent", t, m1_amps + e)
+        on = AUTO0 <= t < AUTO1 or TELE0 <= t < tele_end
         before_mid = t < mid
         w.put("/M2/SupplyCurrent", t, (5.0 if before_mid else -1.0) + e)
         w.put("/M2/Voltage", t, 12.0 if on else 0.0)

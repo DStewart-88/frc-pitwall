@@ -8,25 +8,49 @@ Built by FRC Team 88 (TJ²) for our own robot, and open for any team to use or b
 
 ## Status
 
-Phase 1: a command-line power report for one match at a time. The graphical app, event
-reports and more analyses come next (see the plan in the project docs).
+Phase 2: command-line power reports for each match and for each event, with the change since
+the previous event. The graphical app and more analyses come next.
 
 ## Quick start
 
-Needs Python 3.11 or newer. No other packages.
+Needs Python 3.11 or newer. No other packages. (On Windows, type `py` instead of `python3`.)
+
+**Event report**: point it at one or more event folders.
 
 ```sh
-python3 -m pitwall report path/to/event-folder -p profiles/2026-comp.toml -o reports/
+python3 -m pitwall event "logs/River Rage" "logs/NERD" "logs/Battle of the Bay" -p profiles/2026-comp.toml -o events/
 ```
+
+Each event gets a folder, such as `events/NHALT/`, holding:
+- `index.html`: the event report. Open it in any browser; it works offline.
+- `matches/`: one report per log. The event report links to them.
+- `event.json`: the numbers, which a later event uses for its comparison.
+
+Events in the same run are compared with the event before them. To compare with an event from
+an earlier run, add `--compare events/NHALT`.
+
+**Match reports only**: `python3 -m pitwall report path/to/logs -p profiles/2026-comp.toml -o reports/`
 
 You can pass log files, folders (searched for `.wpilog` files), or both. Logs where the robot
 was never enabled, or that don't contain motor current for this profile, are listed as
 "skipped" and left out.
 
-Each log gets two files in `reports/`: an HTML page you open in any browser (it works offline
-and can be shared as a single file) and a `.power.json` with every number behind it.
+Each log is analyzed once and kept in a cache, so running again after the next match only
+reads the new log. `--no-cache` turns that off.
 
-Other commands:
+### Which matches count
+
+Every match is shown, but the event averages leave out matches that weren't normal: practice
+matches, matches where the robot was enabled for under 90% of the time, matches with a motor
+missing from the CAN bus, and matches that drew under half the event's typical charge (a dead
+robot left enabled). The report says why for each one. `--exclude Q12` and `--include Q2`
+override that by hand. If a match has more than one log, the one with the most enabled time is
+used.
+
+Event names come from the folder name (`2026-10-07_NHALT_Battle-Of-the-Bay` becomes "Battle
+Of the Bay"), or set one with `--name NHALT="Battle of the Bay"`.
+
+### Other commands
 
 ```sh
 python3 -m pitwall check LOG -p PROFILE   # does the profile match this log?
@@ -56,8 +80,9 @@ was doing.
 ## Checking the numbers
 
 `tools/validate_bob.py` reruns the Battle of the Bay (Nov 2026) hand analysis and checks
-Pitwall against it: per-match energy, charge, mean and peak power, lowest battery voltage,
-brownout timing, and subsystem totals. Unit tests run with `python3 -m unittest`.
+Pitwall against it: per-match energy, charge, mean and peak power, lowest battery voltage and
+brownout timing, and the event roll-up (which matches count, averages, subsystem totals,
+matches with a brownout, time left at the first brownout). Unit tests run with `python3 -m unittest`.
 
 ## License
 
