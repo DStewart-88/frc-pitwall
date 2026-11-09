@@ -5,11 +5,13 @@ website can't reach it through DNS tricks), and every change (POST) must carry t
 was put into this run's pages.
 """
 
+import hashlib
 import io
 import json
 import mimetypes
 import os
 import threading
+import time
 import urllib.request
 import webbrowser
 import zipfile
@@ -39,6 +41,7 @@ class App:
         self.token = new_token()
         self.worker = Worker(self.store, cache_dir if cache_dir is not None else default_dir(), jobs, poll_s)
         self.httpd: Optional[ThreadingHTTPServer] = None
+        self.build = build_id()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -108,7 +111,7 @@ class Handler(BaseHTTPRequestHandler):
                 with open(os.path.join(os.path.dirname(__file__), "icon.svg"), "rb") as f:
                     return self._send(200, f.read(), "image/svg+xml")
             if parts == ["api", "ping"]:
-                return self.json({"pitwall": __version__, "data": a.store.root})
+                return self.json({"pitwall": __version__, "data": a.store.root, "build": a.build})
             if parts == ["api", "status"]:
                 return self.json(a.worker.all_status())
             if parts == ["api", "browse"]:
@@ -303,8 +306,21 @@ def _instance_file(root: str) -> str:
     return os.path.join(root, "running.json")
 
 
-def running_instance(root: str) -> Optional[str]:
-    """The URL of a Pitwall app already running on this data folder, if there is one."""
+def build_id() -> str:
+    """Changes whenever Pitwall's code changes (a git pull), even if the version number doesn't."""
+    h = hashlib.sha1(__version__.encode())
+    pkg = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for root, dirs, files in os.walk(pkg):
+        dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+        for f in sorted(files):
+            if f.endswith((".py", ".toml", ".svg")):
+                st = os.stat(os.path.join(root, f))
+                h.update(f"{os.path.relpath(os.path.join(root, f), pkg)}:{st.st_size}:{st.st_mtime_ns}".encode())
+    return h.hexdigest()[:12]
+
+
+def running_instance(root: str) -> Optional[Dict[str, Any]]:
+    """The Pitwall app already running on this data folder, if there is one: {url, build, token}."""
     try:
         with open(_instance_file(root), encoding="utf-8") as f:
             info = json.load(f)
@@ -312,28 +328,57 @@ def running_instance(root: str) -> Optional[str]:
         with urllib.request.urlopen(url + "api/ping", timeout=1.5) as r:
             ping = json.load(r)
         if ping.get("pitwall") and os.path.realpath(ping.get("data", "")) == os.path.realpath(root):
-            return url
+            return {"url": url, "build": ping.get("build"), "token": info.get("token")}
     except (OSError, ValueError, KeyError):
         pass
     return None
+
+
+def _stop_instance(inst: Dict[str, Any], wait_s: float = 8.0) -> bool:
+    """Ask a running Pitwall to quit; True once it has stopped answering."""
+    try:
+        req = urllib.request.Request(inst["url"] + "api/quit", data=b"{}", method="POST",
+                                     headers={"Content-Type": "application/json",
+                                              "X-Pitwall-Token": inst.get("token") or ""})
+        urllib.request.urlopen(req, timeout=3).read()
+    except OSError:
+        pass
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(inst["url"] + "api/ping", timeout=0.5).read()
+        except OSError:
+            return True
+        time.sleep(0.2)
+    return False
 
 
 def serve(data_dir: Optional[str] = None, port: int = 8088, open_browser: bool = True, jobs: int = 2,
           cache_dir: Optional[str] = None) -> None:
     app = App(data_dir, cache_dir, jobs)
     existing = running_instance(app.store.root)
-    if existing:
-        print(f"Pitwall is already running at {existing}; opening it.")
+    if existing and existing["build"] == app.build:
+        print(f"Pitwall is already running at {existing['url']}; opening it.")
         if open_browser:
-            webbrowser.open(existing)
+            webbrowser.open(existing["url"])
         return
+    if existing:
+        # Pitwall was updated since that copy started: replace it, so the new code is what runs.
+        print("Pitwall was updated; restarting the running copy.")
+        if not _stop_instance(existing):
+            print(f"The running copy at {existing['url']} didn't stop; quit it from the page and open Pitwall again.")
+            if open_browser:
+                webbrowser.open(existing["url"])
+            return
     httpd, port = make_server(app, port)
     app.httpd = httpd
     app.worker.start()
     url = f"http://127.0.0.1:{port}/"
     try:
-        with open(_instance_file(app.store.root), "w", encoding="utf-8") as f:
-            json.dump({"port": port, "pid": os.getpid()}, f)
+        path = _instance_file(app.store.root)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)   # holds the token: owner only
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"port": port, "pid": os.getpid(), "token": app.token, "build": app.build}, f)
     except OSError:
         pass
     print(f"Pitwall is running at {url}\nData folder: {app.store.root}\n"
