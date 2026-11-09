@@ -1,10 +1,11 @@
 """Robot profile: what each logged motor is, and which log keys hold its data.
 
-A profile is a TOML file (see profiles/2026-comp.toml). Every key field may be a single
+A profile is a TOML file (see pitwall/profiles/2026-comp.toml). Every key field may be a single
 string or a list of strings: the first key present in a log is used, so one profile can
 cover logs from before and after a code change renamed a key.
 """
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -180,6 +181,34 @@ def load_profile(path: str) -> Profile:
             if st not in {x.name for x in p.states} | {"Other"}:
                 raise ProfileError(f"{path}: subsystem {s.id!r} needed_in names unknown state {st!r}")
     return p
+
+
+BUILTIN_DIR = os.path.join(os.path.dirname(__file__), "profiles")
+
+
+def builtin_profiles() -> List[str]:
+    """Paths of the example profiles that ship with Pitwall."""
+    try:
+        return sorted(os.path.join(BUILTIN_DIR, f) for f in os.listdir(BUILTIN_DIR) if f.endswith(".toml"))
+    except OSError:
+        return []
+
+
+def resolve_profile(arg: str) -> str:
+    """A profile path as given, or the name of a built-in profile ("2026-comp").
+
+    Older commands used profiles/2026-comp.toml from the repo root; that still works.
+    """
+    if os.path.isfile(arg):
+        return arg
+    name = os.path.basename(arg)
+    if not name.endswith(".toml"):
+        name += ".toml"
+    builtin = os.path.join(BUILTIN_DIR, name)
+    if os.path.isfile(builtin):
+        return builtin
+    raise ProfileError(f"no profile at {arg!r} (built-in profiles: "
+                       + ", ".join(os.path.basename(p)[:-5] for p in builtin_profiles()) + ")")
 
 
 def first_present(log: WPILog, keys: KeyList) -> Optional[str]:

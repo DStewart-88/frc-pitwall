@@ -8,17 +8,38 @@ Built by FRC Team 88 (TJ²) for our own robot, and open for any team to use or b
 
 ## Status
 
-Phase 2: command-line power reports for each match and for each event, with the change since
-the previous event. The graphical app and more analyses come next.
+Phase 3 in progress: the app (events, folder watching, report pages) works; guided robot-profile
+setup from the robot code and an installer come next. The command line still works too.
 
-## Quick start
+## The app
+
+```sh
+python3 -m pitwall app
+```
+
+This opens Pitwall in your browser. It runs only on this computer and needs no internet.
+
+1. **Robot profiles**: add your robot once. For now, import a profile file or start from the
+   example; a guided setup that reads the robot code is coming.
+2. **New event**: pick the folder with the logs (the USB stick from the robot, or the folder the
+   logs are copied to). Pitwall copies the logs, builds the event report, and keeps watching the
+   folder. Each new match shows up on its own, usually within ten seconds of the file landing.
+3. On the event page: **Add logs** from another folder, **Settings** (name, which matches count,
+   which event to compare with), and **Download report** (a zip you can send anyone; it opens in
+   any browser).
+
+The app keeps its profiles, copied logs and reports in your user data folder
+(`~/.local/share/pitwall` on Linux, `%APPDATA%\Pitwall` on Windows,
+`~/Library/Application Support/Pitwall` on a Mac). Nothing is written to the robot code.
+
+## Command line
 
 Needs Python 3.11 or newer. No other packages. (On Windows, type `py` instead of `python3`.)
 
 **Event report**: point it at one or more event folders.
 
 ```sh
-python3 -m pitwall event "logs/River Rage" "logs/NERD" "logs/Battle of the Bay" -p profiles/2026-comp.toml -o events/
+python3 -m pitwall event "logs/River Rage" "logs/NERD" "logs/Battle of the Bay" -p 2026-comp -o events/
 ```
 
 Each event gets a folder, such as `events/NHALT/`, holding:
@@ -29,7 +50,7 @@ Each event gets a folder, such as `events/NHALT/`, holding:
 Events in the same run are compared with the event before them. To compare with an event from
 an earlier run, add `--compare events/NHALT`.
 
-**Match reports only**: `python3 -m pitwall report path/to/logs -p profiles/2026-comp.toml -o reports/`
+**Match reports only**: `python3 -m pitwall report path/to/logs -p 2026-comp -o reports/`
 
 You can pass log files, folders (searched for `.wpilog` files), or both. Logs where the robot
 was never enabled, or that don't contain motor current for this profile, are listed as
@@ -71,7 +92,7 @@ python3 -m pitwall keys LOG [FILTER]      # list what a log contains
 
 ## Robot profiles
 
-A profile (`profiles/*.toml`) says what each motor is, which subsystem it belongs to, and
+A profile (a `.toml` file; the example is `pitwall/profiles/2026-comp.toml`) says what each motor is, which subsystem it belongs to, and
 which log keys hold its supply current, applied voltage and speed. A key field can list
 several keys; the first one present in a log is used. Robot states (Shooting, Driving, ...)
 come from logged signals and let the report split each subsystem's charge by what the robot

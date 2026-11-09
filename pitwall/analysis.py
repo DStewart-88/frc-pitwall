@@ -8,6 +8,7 @@ one of:
 """
 
 import dataclasses
+import multiprocessing
 import os
 import re
 from concurrent.futures import ProcessPoolExecutor
@@ -100,7 +101,8 @@ def analyze_logs(paths: List[str], profile_path: str, current_mode: Optional[str
             if progress:
                 progress(a[0], r)
         return results
-    with ProcessPoolExecutor(max_workers=jobs) as ex:
+    # "spawn" behaves the same on every OS and is safe when the caller has threads (the app).
+    with ProcessPoolExecutor(max_workers=jobs, mp_context=multiprocessing.get_context("spawn")) as ex:
         futures = [ex.submit(_analyze_one, *a) for a in args]
         for a, fu in zip(args, futures):
             try:
