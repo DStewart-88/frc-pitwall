@@ -12,7 +12,7 @@ from .report.html import render
 
 
 # Bump when the report pages change, so the app rebuilds reports made by an older Pitwall.
-REPORT_VERSION = 2
+REPORT_VERSION = 3
 
 
 def _stem(file_name: str) -> str:
