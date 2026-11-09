@@ -84,6 +84,14 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(ev["compare"]["code"], "AAA")
         self.assertEqual(self.worker.get_status(b)["version"], 1)
         self.assertTrue(os.path.exists(os.path.join(self.store.report_dir(b), "index.html")))
+        # a report from an older Pitwall gets rebuilt at start-up
+        self.assertFalse(self.worker._needs_build(b))
+        with open(os.path.join(self.store.report_dir(b), "event.json")) as f:
+            old = json.load(f)
+        old["report_version"] = 1
+        with open(os.path.join(self.store.report_dir(b), "event.json"), "w") as f:
+            json.dump(old, f)
+        self.assertTrue(self.worker._needs_build(b))
         # compare: none
         self.store.save_event(b, {"compare": "none"})
         self.worker.build(b)

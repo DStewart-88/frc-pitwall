@@ -11,6 +11,10 @@ from .report.event_html import render_event
 from .report.html import render
 
 
+# Bump when the report pages change, so the app rebuilds reports made by an older Pitwall.
+REPORT_VERSION = 2
+
+
 def _stem(file_name: str) -> str:
     return os.path.splitext(file_name)[0]
 
@@ -99,6 +103,7 @@ def write_event(ev: Dict[str, Any], g: Dict[str, List[Dict[str, Any]]], folder: 
         if p["source"]["file"] in chosen:
             links[p["identity"]["label"]] = "matches/" + html_name
             series[p["identity"]["label"]] = p["power"]["series"]
+    ev["report_version"] = REPORT_VERSION
     with open(os.path.join(folder, "event.json"), "w", encoding="utf-8") as f:
         json.dump(ev, f, indent=1)
     index = os.path.join(folder, "index.html")
