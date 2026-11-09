@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from pitwall import power                      # noqa: E402
-from pitwall.match import build_match          # noqa: E402
+from pitwall.match import SkipLog, build_match          # noqa: E402
 from pitwall.profile import load_profile       # noqa: E402
 from pitwall.wpilog import WPILog              # noqa: E402
 
@@ -45,7 +45,10 @@ def run(folder, mode):
     p.current_mode = mode
     out = {}
     for path in sorted(glob.glob(os.path.join(folder, "*.wpilog"))):
-        m = build_match(WPILog(path), p)
+        try:
+            m = build_match(WPILog(path), p)
+        except SkipLog:
+            continue
         if m.identity.label in REVIEW:
             out[m.identity.label] = power.analyze(m)
     return out

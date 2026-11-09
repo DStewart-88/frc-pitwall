@@ -16,8 +16,12 @@ reports and more analyses come next (see the plan in the project docs).
 Needs Python 3.11 or newer. No other packages.
 
 ```sh
-python3 -m pitwall report path/to/akit_*.wpilog -p profiles/2026-comp.toml -o reports/
+python3 -m pitwall report path/to/event-folder -p profiles/2026-comp.toml -o reports/
 ```
+
+You can pass log files, folders (searched for `.wpilog` files), or both. Logs where the robot
+was never enabled, or that don't contain motor current for this profile, are listed as
+"skipped" and left out.
 
 Each log gets two files in `reports/`: an HTML page you open in any browser (it works offline
 and can be shared as a single file) and a `.power.json` with every number behind it.
