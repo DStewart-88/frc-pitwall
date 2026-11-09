@@ -8,19 +8,29 @@ Built by FRC Team 88 (TJ²) for our own robot, and open for any team to use or b
 
 ## Status
 
-Phase 3 in progress: the app (events, folder watching, report pages) works; guided robot-profile
-setup from the robot code and an installer come next. The command line still works too.
+Phase 3 in progress: the app works on Linux (install, robot setup from the code, events, folder
+watching, reports). A Windows installer comes next. The command line still works too.
 
 ## The app
 
+**Install on Linux** (Python 3.11 or newer; no other packages, no root):
+
 ```sh
-python3 -m pitwall app
+git clone https://github.com/DStewart-88/frc-pitwall
+cd frc-pitwall
+./install-linux.sh
 ```
 
-This opens Pitwall in your browser. It runs only on this computer and needs no internet.
+Then open **Pitwall** from the app menu. It opens in your browser, runs only on this computer and
+needs no internet. Opening it again while it's running just brings the page back; **Quit** in the
+page stops it. To update, `git pull` in the frc-pitwall folder. `./install-linux.sh --uninstall`
+removes the menu entry and keeps your data. (Without installing: `python3 -m pitwall app`.)
 
-1. **Robot profiles**: add your robot once. For now, import a profile file or start from the
-   example; a guided setup that reads the robot code is coming.
+1. **Set up your robot** once: pick the robot code folder and a folder of its logs. Pitwall reads
+   the Java to find every motor (name, CAN ID, bus) and the log keys its data is saved under,
+   checks them against a log, and shows you a table to confirm. Rename motors, group them the way
+   the team talks about the robot, untick anything that isn't on it, and save. Motors whose keys
+   it couldn't trace from the code are matched in the log by name and marked so you can check them.
 2. **New event**: pick the folder with the logs (the USB stick from the robot, or the folder the
    logs are copied to). Pitwall copies the logs, builds the event report, and keeps watching the
    folder. Each new match shows up on its own, usually within ten seconds of the file landing.

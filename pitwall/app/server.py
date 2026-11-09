@@ -10,6 +10,7 @@ import json
 import mimetypes
 import os
 import threading
+import urllib.request
 import webbrowser
 import zipfile
 from http import HTTPStatus
@@ -17,11 +18,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
+from .. import __version__
 from ..cache import default_dir
 from ..profile import ProfileError, builtin_profiles, load_profile
 from . import pages
 from .store import Store, new_token, slug
-from .worker import Worker, drives, list_folder
+from ..setup.draft import draft_to_toml, make_draft
+from ..setup.scan import scan
+from ..wpilog import WPILog, WPILogError
+from .setup_page import setup_page
+from .worker import Worker, drives, list_folder, logs_in
 
 MAX_BODY = 8 * 1024 * 1024
 
@@ -32,6 +38,7 @@ class App:
         self.store = Store(data_dir)
         self.token = new_token()
         self.worker = Worker(self.store, cache_dir if cache_dir is not None else default_dir(), jobs, poll_s)
+        self.httpd: Optional[ThreadingHTTPServer] = None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -97,10 +104,15 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if not parts:
                 return self.html(pages.home(s.list_events(), a.worker.all_status(), s.list_profiles(), t))
+            if parts == ["icon.svg"]:
+                with open(os.path.join(os.path.dirname(__file__), "icon.svg"), "rb") as f:
+                    return self._send(200, f.read(), "image/svg+xml")
+            if parts == ["api", "ping"]:
+                return self.json({"pitwall": __version__, "data": a.store.root})
             if parts == ["api", "status"]:
                 return self.json(a.worker.all_status())
             if parts == ["api", "browse"]:
-                d = list_folder((q.get("path") or [""])[0] or os.path.expanduser("~"))
+                d = list_folder((q.get("path") or [""])[0] or os.path.expanduser("~"), (q.get("kind") or ["logs"])[0])
                 d["places"] = drives()
                 return self.json(d)
             if parts == ["events", "new"]:
@@ -109,6 +121,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.get_event(parts[1], parts[2:], url.path.endswith("/"))
             if parts[0] == "api" and len(parts) == 4 and parts[1] == "events" and parts[3] == "status":
                 return self.json(a.worker.get_status(slug(parts[2])))
+            if parts == ["profiles", "new"]:
+                return self.html(setup_page(t))
+            if parts == ["api", "setup", "logs"]:
+                return self.json(logs_in((q.get("path") or [""])[0]))
             if parts == ["profiles"]:
                 used: Dict[str, list] = {}
                 for e in s.list_events():
@@ -124,7 +140,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(200, f.read(), "application/toml",
                                           {"Content-Disposition": f'attachment; filename="{slug(parts[1])}.toml"'})
                 try:
-                    return self.html(pages.profile_view(parts[1], load_profile(path), t))
+                    return self.html(pages.profile_view(parts[1], load_profile(path), t, "new" in q))
                 except (ProfileError, ValueError, KeyError) as e:
                     return self.html(pages.page("Profile", f'<div class="msg err">{pages.esc(e)}</div>', t), 200)
             return self.not_found()
@@ -184,6 +200,11 @@ class Handler(BaseHTTPRequestHandler):
         a, s = self.app, self.app.store
         try:
             body = self.body_json()
+            if parts == ["api", "quit"]:
+                self.json({"ok": True})
+                if a.httpd:
+                    threading.Thread(target=a.httpd.shutdown, daemon=True).start()
+                return None
             if parts == ["api", "events"]:
                 sources = [os.path.abspath(p) for p in body.get("sources", []) if p]
                 if not sources:
@@ -227,11 +248,25 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     pid = s.save_profile(body.get("toml", ""), body.get("name", ""))
                 return self.json({"id": pid})
+            if parts == ["api", "setup", "scan"]:
+                code = body.get("code") or ""
+                if not os.path.isdir(code):
+                    return self.error_json("Pick the robot code folder first.")
+                result = scan(code)
+                if not result.motors:
+                    return self.error_json("No motors found in that code. " + " ".join(result.notes))
+                log = WPILog(body["log"]) if body.get("log") else None
+                name = os.path.basename(os.path.normpath(code))
+                return self.json(make_draft(result, log, name))
+            if parts == ["api", "setup", "save"]:
+                d = body.get("draft") or {}
+                pid = s.save_profile(draft_to_toml(d), d.get("robot_name", ""))
+                return self.json({"id": pid})
             if len(parts) == 4 and parts[:2] == ["api", "profiles"] and parts[3] == "delete":
                 s.delete_profile(parts[2])
                 return self.json({"ok": True})
             return self.error_json("Unknown request.", 404)
-        except (ProfileError, ValueError, KeyError, OSError) as e:
+        except (ProfileError, ValueError, KeyError, OSError, WPILogError) as e:
             return self.error_json(str(e))
 
     def _first_import(self, eid: str) -> None:
@@ -264,13 +299,45 @@ def make_server(app: App, port: int = 8088) -> Tuple[ThreadingHTTPServer, int]:
     raise OSError(f"no free port near {port}: {last_err}")
 
 
+def _instance_file(root: str) -> str:
+    return os.path.join(root, "running.json")
+
+
+def running_instance(root: str) -> Optional[str]:
+    """The URL of a Pitwall app already running on this data folder, if there is one."""
+    try:
+        with open(_instance_file(root), encoding="utf-8") as f:
+            info = json.load(f)
+        url = f"http://127.0.0.1:{int(info['port'])}/"
+        with urllib.request.urlopen(url + "api/ping", timeout=1.5) as r:
+            ping = json.load(r)
+        if ping.get("pitwall") and os.path.realpath(ping.get("data", "")) == os.path.realpath(root):
+            return url
+    except (OSError, ValueError, KeyError):
+        pass
+    return None
+
+
 def serve(data_dir: Optional[str] = None, port: int = 8088, open_browser: bool = True, jobs: int = 2,
           cache_dir: Optional[str] = None) -> None:
     app = App(data_dir, cache_dir, jobs)
+    existing = running_instance(app.store.root)
+    if existing:
+        print(f"Pitwall is already running at {existing}; opening it.")
+        if open_browser:
+            webbrowser.open(existing)
+        return
     httpd, port = make_server(app, port)
+    app.httpd = httpd
     app.worker.start()
     url = f"http://127.0.0.1:{port}/"
-    print(f"Pitwall is running at {url}\nData folder: {app.store.root}\nLeave this window open; press Ctrl+C to stop.")
+    try:
+        with open(_instance_file(app.store.root), "w", encoding="utf-8") as f:
+            json.dump({"port": port, "pid": os.getpid()}, f)
+    except OSError:
+        pass
+    print(f"Pitwall is running at {url}\nData folder: {app.store.root}\n"
+          "Leave this running; stop it with Quit in the app or Ctrl+C here.", flush=True)
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
@@ -280,3 +347,7 @@ def serve(data_dir: Optional[str] = None, port: int = 8088, open_browser: bool =
     finally:
         app.worker.stop()
         httpd.server_close()
+        try:
+            os.remove(_instance_file(app.store.root))
+        except OSError:
+            pass
