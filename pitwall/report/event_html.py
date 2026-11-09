@@ -291,31 +291,46 @@ def _arc(cx: float, cy: float, r_out: float, r_in: float, a0: float, a1: float) 
             f"L{x2:.2f},{y2:.2f} A{r_in},{r_in} 0 {large} 0 {x3:.2f},{y3:.2f} Z")
 
 
-def donut_svg(parts: List[Dict[str, Any]], total: float, title: str, sub: str, which: str) -> str:
-    """parts: [{id, name, color, ah}] in drawing order. Each segment carries its figures for the tooltip."""
+def _ring(parts: List[Dict[str, Any]], c: float, r_out: float, r_in: float, which: str, label: str,
+          opacity: float) -> str:
     import math
-    size, r_out, r_in = 220, 100, 64
-    c = size / 2
-    out = [f'<svg viewBox="0 0 {size} {size}" class="donut" role="img" '
-           f'aria-label="{esc(title)}: charge per match by group, {total:.2f} Ah in all">']
     pos = sum(max(0.0, p["ah"]) for p in parts)
-    a = 0.0
+    out, a = [], 0.0
     for p in parts:
         v = max(0.0, p["ah"])
         if pos <= 0 or v <= 0:
             continue
         span = v / pos * 2 * math.pi
         share = v / pos
+        # aria-label, not <title>: a <title> would pop up the browser's own tooltip over ours
         out.append(f'<path class="seg" d="{_arc(c, c, r_out, r_in, a, a + span)}" fill="{color_for(p["color"])}" '
-                   f'stroke="#ffffff" stroke-width="2" stroke-linejoin="round" data-sub="{esc(p["id"])}" '
-                   f'data-name="{esc(p["name"])}" data-ah="{v:.2f}" data-pct="{share * 100:.0f}" data-which="{esc(which)}" '
-                   # aria-label, not <title>: a <title> would pop up the browser's own tooltip over ours
-                   f'aria-label="{esc(p["name"])}: {v:.2f} Ah per match, {share:.0%} of the total ({esc(title)})"/>')
+                   f'fill-opacity="{opacity}" stroke="#ffffff" stroke-width="2" stroke-linejoin="round" '
+                   f'data-sub="{esc(p["id"])}" data-which="{which}" '
+                   f'aria-label="{esc(p["name"])}: {v:.2f} Ah per match, {share:.0%} of the total ({esc(label)})"/>')
         a += span
-    out.append(f'<text x="{c}" y="{c - 4}" text-anchor="middle" class="dn-big">{total:.2f}</text>'
-               f'<text x="{c}" y="{c + 16}" text-anchor="middle" class="dn-small">Ah per match</text></svg>')
-    return (f'<figure class="dn"><div class="dn-title">{esc(title)}</div>{"".join(out)}'
-            f'<figcaption>{esc(sub)}</figcaption></figure>')
+    return "".join(out)
+
+
+def donut_svg(cur: List[Dict[str, Any]], cur_total: float, cur_label: str,
+              prev: Optional[List[Dict[str, Any]]] = None, prev_total: float = 0.0, prev_label: str = "") -> str:
+    """This event as the main ring; the previous event, if any, as a thin faded ring inside it, with
+    the same slice order, colors and starting point so each group sits in the same place in both."""
+    size = 280
+    c = size / 2
+    out = [f'<svg viewBox="0 0 {size} {size}" class="donut" role="img" aria-label="{esc(cur_label)}: charge per match '
+           f'by group, {cur_total:.2f} Ah in all' + (f'; inner ring {esc(prev_label)}, {prev_total:.2f} Ah' if prev else "")
+           + '">']
+    out.append(_ring(cur, c, 136, 96, "cur", cur_label, 1.0))
+    if prev:
+        out.append(_ring(prev, c, 86, 74, "prev", prev_label, 0.4))
+        out.append(f'<text x="{c}" y="{c - 6}" text-anchor="middle" class="dn-big">{cur_total:.2f}</text>'
+                   f'<text x="{c}" y="{c + 12}" text-anchor="middle" class="dn-small">Ah per match</text>'
+                   f'<text x="{c}" y="{c + 32}" text-anchor="middle" class="dn-prev">was {prev_total:.2f}</text>')
+    else:
+        out.append(f'<text x="{c}" y="{c - 2}" text-anchor="middle" class="dn-big">{cur_total:.2f}</text>'
+                   f'<text x="{c}" y="{c + 18}" text-anchor="middle" class="dn-small">Ah per match</text>')
+    out.append("</svg>")
+    return "".join(out)
 
 
 def charge_split_html(ev: Dict[str, Any]) -> str:
@@ -325,31 +340,42 @@ def charge_split_html(ev: Dict[str, Any]) -> str:
     subs = sorted(ev["subsystem_info"], key=lambda s: -A["subsystems"][s["id"]]["ah"])
     cur = [{"id": s["id"], "name": s["name"], "color": s["color"], "ah": A["subsystems"][s["id"]]["ah"]} for s in subs]
     cur_total = sum(max(0.0, p["ah"]) for p in cur)
-    donuts = donut_svg(cur, A["ah"] or 0.0, ev["name"], f'Average of {A["n"]} matches', "cur")
-    prev_by = {}
+    prev_by: Dict[str, float] = {}
     prev_total = 0.0
+    prev = None
+    prev_ah = 0.0
     if C:
         prev_by = {r["key"]: r["prev"] for r in C["subsystems"] if r["prev"] is not None}
         prev = [{"id": p["id"], "name": p["name"], "color": p["color"], "ah": prev_by.get(p["id"], 0.0)} for p in cur]
         prev_total = sum(max(0.0, p["ah"]) for p in prev)
         prev_ah = next((r["prev"] for r in C["rows"] if r["key"] == "ah"), None) or prev_total
-        donuts += donut_svg(prev, prev_ah, C["name"], f'Average of {C["matches"]} matches', "prev")
-    head = '<th>Group</th><th class="r">Ah</th><th class="r">Share</th>'
+    svg = donut_svg(cur, A["ah"] or 0.0, ev["name"], prev, prev_ah, C["name"] if C else "")
+    key = (f'<div class="dn-key"><span><i class="ring cur"></i>Outer ring: {esc(ev["name"])}, {A["n"]} matches</span>'
+           f'<span><i class="ring prev"></i>Inner ring: {esc(C["name"])}, {C["matches"]} matches</span></div>'
+           if C else f'<div class="dn-key"><span>Average of {A["n"]} matches</span></div>')
+    donuts = f'<figure class="dn">{svg}{key}</figure>'
+    head = f'<th>Group</th><th class="r">{esc(ev["name"])}<br>Ah per match</th><th class="r">Share</th>'
     if C:
-        head += f'<th class="r">{esc(C["name"])}</th><th class="r">Share</th>'
+        head += (f'<th class="r">{esc(C["name"])}<br>Ah per match</th><th class="r">Share</th>'
+                 '<th class="r">Change</th>')
     rows = []
     for p in cur:
         share = max(0.0, p["ah"]) / cur_total if cur_total else 0.0
         cells = (f'<td><i class="sw" style="background:{color_for(p["color"])}"></i>{esc(p["name"])}</td>'
                  f'<td class="r num">{p["ah"]:.2f}</td><td class="r num">{share:.0%}</td>')
+        data = (f'data-sub="{esc(p["id"])}" data-name="{esc(p["name"])}" data-cur-name="{esc(ev["name"])}" '
+                f'data-cur-ah="{p["ah"]:.2f}" data-cur-pct="{share:.0%}"')
         if C:
             pv = prev_by.get(p["id"])
             ps = (max(0.0, pv) / prev_total) if (pv is not None and prev_total) else None
-            cells += (f'<td class="r num">{fmt(pv, 2)}</td>'
-                      f'<td class="r num">{"—" if ps is None else f"{ps:.0%}"}</td>')
-        rows.append(f'<tr data-sub="{esc(p["id"])}">{cells}</tr>')
+            pss = "—" if ps is None else f"{ps:.0%}"
+            d = (p["ah"] - pv) if pv is not None else None
+            cells += (f'<td class="r num">{fmt(pv, 2)}</td><td class="r num">{pss}</td>'
+                      f'<td class="r num">{fmt_delta(d, 2)} <span class="muted">{fmt_pct(d / pv if d is not None and pv else None)}</span></td>')
+            data += (f' data-prev-name="{esc(C["name"])}" data-prev-ah="{fmt(pv, 2)}" data-prev-pct="{pss}"')
+        rows.append(f'<tr {data}>{cells}</tr>')
     lead = ("Each group's share of the charge an average match used"
-            + (f", here and at {esc(C['name'])}. Slices are in the same order and color in both rings." if C else ".")
+            + (f". The faded inner ring is {esc(C['name'])}, with the groups in the same order and place." if C else ".")
             + " Hover a slice or a row for its figures.")
     return (f'<section class="card"><h2>Where the charge goes</h2><p class="lead">{lead}</p>'
             f'<div class="split"><div class="dns">{donuts}</div>'
@@ -358,15 +384,19 @@ def charge_split_html(ev: Dict[str, Any]) -> str:
 
 
 DONUT_CSS = """
-.split{display:grid;grid-template-columns:minmax(0,auto) minmax(300px,1fr);gap:24px 36px;align-items:center}
-@media (max-width:900px){.split{grid-template-columns:1fr}}
-.dns{display:flex;flex-wrap:wrap;gap:24px;justify-content:center}
-figure.dn{margin:0;text-align:center} .dn-title{font:700 14px Arial,sans-serif;margin-bottom:6px}
-figure.dn figcaption{font-size:12px;color:var(--muted);margin-top:4px}
-svg.donut{width:220px;height:220px;display:block}
+.split{display:grid;grid-template-columns:300px minmax(0,1fr);gap:24px 40px;align-items:center}
+@media (max-width:820px){.split{grid-template-columns:1fr}}
+.dns{display:flex;justify-content:center}
+figure.dn{margin:0;text-align:center}
+svg.donut{width:280px;height:280px;display:block;margin:0 auto}
 svg.donut .seg{cursor:pointer;transition:opacity .12s}
-.dn-big{font:700 26px Arial,sans-serif;fill:var(--navy)} .dn-small{font:12px Arial,sans-serif;fill:var(--muted)}
-.split.hl svg.donut .seg{opacity:.25} .split.hl svg.donut .seg.on{opacity:1}
+.dn-big{font:700 30px Arial,sans-serif;fill:var(--navy)} .dn-small{font:12px Arial,sans-serif;fill:var(--muted)}
+.dn-prev{font:12px Arial,sans-serif;fill:var(--muted)}
+.dn-key{display:flex;flex-direction:column;gap:4px;align-items:center;font-size:12px;color:var(--muted);margin-top:8px}
+.dn-key i.ring{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:6px;vertical-align:-2px}
+.dn-key i.ring.cur{border:4px solid var(--navy);box-sizing:border-box}
+.dn-key i.ring.prev{border:2px solid rgba(1,25,69,.4);box-sizing:border-box;width:10px;height:10px}
+.split.hl svg.donut .seg{opacity:.2} .split.hl svg.donut .seg.on{opacity:1}
 table.dn-table tr{cursor:default} table.dn-table tr.on td{background:#f1f3f8}
 """
 
@@ -380,12 +410,13 @@ DONUT_JS = """
   function show(ev,html){tip.innerHTML=html;tip.style.display='block';
     var x=ev.clientX+14,y=ev.clientY+12;if(x+tip.offsetWidth>innerWidth-8)x=ev.clientX-tip.offsetWidth-14;
     if(y+tip.offsetHeight>innerHeight-8)y=innerHeight-tip.offsetHeight-8;tip.style.left=x+'px';tip.style.top=y+'px';}
-  function info(sub){var out='';box.querySelectorAll('.seg[data-sub="'+sub+'"]').forEach(function(s){
-    var t=s.closest('figure').querySelector('.dn-title').textContent;
-    out+='<div class="r"><span>'+t+'</span><b>'+s.dataset.ah+' Ah · '+s.dataset.pct+'%</b></div>';});return out;}
+  function info(sub){var r=box.querySelector('tr[data-sub="'+sub+'"]'),d=r.dataset,out='';
+    out+='<div style="margin-bottom:4px"><b>'+d.name+'</b> <span style="color:#5a6479">per match</span></div>';
+    out+='<div class="r"><span>'+d.curName+'</span><b>'+d.curAh+' Ah · '+d.curPct+'</b></div>';
+    if(d.prevName)out+='<div class="r"><span>'+d.prevName+'</span><span>'+d.prevAh+' Ah · '+d.prevPct+'</span></div>';
+    return out;}
   box.querySelectorAll('.seg').forEach(function(s){
-    s.addEventListener('mousemove',function(e){hl(s.dataset.sub);
-      show(e,'<div style="margin-bottom:4px"><b>'+s.dataset.name+'</b> <span style="color:#5a6479">per match</span></div>'+info(s.dataset.sub));});
+    s.addEventListener('mousemove',function(e){hl(s.dataset.sub);show(e,info(s.dataset.sub));});
     s.addEventListener('mouseleave',function(){hl(null);tip.style.display='none';});});
   box.querySelectorAll('tr[data-sub]').forEach(function(r){
     r.addEventListener('mouseenter',function(){hl(r.dataset.sub);});
