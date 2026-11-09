@@ -74,6 +74,10 @@ class Match:
     state: List[str]
     flags: List[str] = field(default_factory=list)
     silent: Dict[str, str] = field(default_factory=dict)   # motor id -> why it looks silent
+    period: List[Optional[int]] = field(default_factory=list)  # index into profile.periods per tick
+    alliance: Optional[str] = None      # "R" / "B" from the DS alliance station
+    game_data: Optional[str] = None     # first game-data letter in the match
+    period_hub: List[Optional[bool]] = field(default_factory=list)  # our hub active, per period
     _cache: Dict[str, List[Any]] = field(default_factory=dict, repr=False)
 
     @property
@@ -217,6 +221,7 @@ def build_match(log: WPILog, profile: Profile) -> Match:
               enabled=enabled, auto=auto, blocks=blocks, vbat=vbat, time_left=time_left,
               state=["Other"] * n, flags=flags)
     m.state = _states(m)
+    _periods(m)
     if log.truncated:
         flags.append("Log ends mid-record (robot power was likely cut)")
     m.silent = _silent_motors(m)
@@ -249,6 +254,49 @@ def _silent_motors(m: Match) -> Dict[str, str]:
         if not any(lo <= x <= hi for x in t):
             out[mo.id] = "logged no supply current during the match"
     return out
+
+
+def _periods(m: Match) -> None:
+    """Game period per tick (from match time left), our alliance, and when our hub was active."""
+    p = m.profile
+    n = len(m.grid)
+    m.period = [None] * n
+    if p.periods and m.identity.is_fms:
+        last = len(p.periods) - 1
+        for i, left in enumerate(m.time_left):
+            if left is None:
+                continue
+            for k, per in enumerate(p.periods):
+                if per.to_left < left <= per.from_left + 1e-9 or (k == last and left <= per.to_left):
+                    m.period[i] = k
+                    break
+    # Alliance: the station at the first enable (1-3 red, 4-6 blue).
+    akey = first_present(m.log, p.alliance_key)
+    if akey and m.blocks:
+        held = m.held(akey)
+        i0 = next((i for i, e in enumerate(m.enabled) if e), 0)
+        st = held[i0]
+        if isinstance(st, (int, float)):
+            m.alliance = "R" if 1 <= st <= 3 else ("B" if 4 <= st <= 6 else None)
+    gkey = first_present(m.log, p.game_data_key)
+    if gkey:
+        t, v = m.log.series(gkey)
+        lo, hi = m.grid[0], m.grid[-1]
+        for ti, vi in zip(t, v):
+            if lo <= ti <= hi and isinstance(vi, str) and vi.strip()[:1].upper() in ("R", "B"):
+                m.game_data = vi.strip()[0].upper()
+                break
+    m.period_hub = []
+    for per in p.periods:
+        if per.hub == "active":
+            m.period_hub.append(True)
+        elif m.alliance is None or m.game_data is None:
+            m.period_hub.append(None)
+        else:
+            named = m.game_data == m.alliance
+            m.period_hub.append(named if per.hub == "active_if_named" else not named)
+    if p.periods and m.identity.is_fms and (m.alliance is None or m.game_data is None):
+        m.flags.append("No alliance or game data in the log, so hub active/inactive shifts are unknown")
 
 
 def _states(m: Match) -> List[str]:

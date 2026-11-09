@@ -151,6 +151,23 @@ def analyze(m: Match) -> Dict[str, Any]:
     quarters = [span(idx[round(k * q):round((k + 1) * q)]) for k in range(4)]
     state_s = {st: sum(1 for i in idx if m.state[i] == st) * dt for st in state_names}
 
+    # Game periods (2026: Auto, Transition, Shifts 1-4, End Game) and our hub's state
+    periods = []
+    for k, per in enumerate(p.periods):
+        ix = [i for i in idx if m.period[i] == k] if m.period else []
+        d = span(ix)
+        d["state_s"] = {st: sum(1 for i in ix if m.state[i] == st) * dt for st in state_names}
+        d.update({"name": per.name, "from_left": per.from_left, "to_left": per.to_left,
+                  "hub": m.period_hub[k] if k < len(m.period_hub) else None,
+                  "conditional": per.hub != "active"})
+        periods.append(d)
+    hub_split = None
+    cond = [k for k, per in enumerate(p.periods) if per.hub != "active"]
+    if cond and m.period and all(m.period_hub[k] is not None for k in cond):
+        on = [i for i in idx if m.period[i] in cond and m.period_hub[m.period[i]]]
+        off = [i for i in idx if m.period[i] in cond and not m.period_hub[m.period[i]]]
+        hub_split = {"active": span(on), "inactive": span(off)}
+
     # Brownouts: rising edges of the robot's brownout flag inside the match window
     bkey = next((k for k in p.brownout if m.log.has(k)), None)
     onsets: List[float] = []
@@ -172,11 +189,23 @@ def analyze(m: Match) -> Dict[str, Any]:
         return None
 
     first = episodes[0] if episodes else None
+
+    def period_at(t: float) -> Optional[str]:
+        if not m.period:
+            return None
+        i = min(n - 1, max(0, round((t - m.grid[0]) / dt)))
+        for j in range(i, max(-1, i - 50), -1):
+            if m.period[j] is not None:
+                return p.periods[m.period[j]].name
+        return None
+
     en_v = [m.vbat[i] for i in idx]
     brownout = {
         "key": bkey, "onsets": len(onsets), "episodes": len(episodes),
         "first_t": (first - m.t0) if first is not None else None,
         "first_time_left_s": left_at(first) if first is not None else None,
+        "first_period": period_at(first) if first is not None else None,
+        "episode_period": [period_at(o) for o in episodes],
         "episode_times": [o - m.t0 for o in episodes],
         "episode_time_left": [left_at(o) for o in episodes],
         "seconds_below_threshold": sum(1 for i in idx if m.vbat[i] < BROWNOUT_V) * dt,
@@ -195,6 +224,8 @@ def analyze(m: Match) -> Dict[str, Any]:
         "min_v": min(en_v), "ah_returned": sum(x["ah_returned"] for x in motors),
         "auto": span(auto_ix), "teleop": span(tele_ix), "quarters": quarters,
         "state_s": state_s, "current_mode": p.current_mode,
+        "periods": periods, "hub_split": hub_split,
+        "alliance": m.alliance, "game_data": m.game_data,
     }
 
     # Closure check: subsystems add up to the total (they must, by construction)
@@ -225,8 +256,15 @@ def _series(m: Match, sub_i: Dict[str, List[float]], total_i: List[float],
         for k, vals in sub_i.items():
             subs[k].append(round(sum(vals[a:a + step]) / step, 2))
         tot.append(round(sum(total_i[a:a + step]) / step, 2))
+    periods = []
+    for k, per in enumerate(m.profile.periods):
+        ticks = [i for i, x in enumerate(m.period) if x == k] if m.period else []
+        if ticks:
+            periods.append({"name": per.name, "start": m.grid[ticks[0]] - m.t0,
+                            "end": m.grid[ticks[-1]] + m.dt - m.t0,
+                            "hub": m.period_hub[k] if k < len(m.period_hub) else None})
     return {
-        "t": t, "vbat": vb, "subsystem_a": subs, "total_a": tot,
+        "t": t, "vbat": vb, "subsystem_a": subs, "total_a": tot, "periods": periods,
         "blocks": [{"start": b.start - m.t0, "end": b.end - m.t0, "mode": b.mode} for b in m.blocks],
         "brownout_onsets": [o - m.t0 for o in onsets],
     }

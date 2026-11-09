@@ -25,6 +25,7 @@ REVIEW = {
     "Q14": (54.5, 5.64, 1226, 2138, 5.9, 17.8, 55),
     "Q21": (46.5, 5.03, 1046, 2203, 5.7, 52.8, 142),
 }
+REVIEW_MATCHES = {"Q2", "Q7", "Q14", "Q21"}      # Q2 is in the folder but the review left it out
 REVIEW_EVENT = {
     "wh": 52.0, "ah": 5.51, "mean_w": 1171, "mean_a": 124, "auto_w": 1172, "teleop_w": 1171,
     "peak_1s_w": 2149, "p95_a": 237, "quarters_w": (1268, 1415, 1338, 666), "episodes": 16,
@@ -44,7 +45,8 @@ def run(folder, mode):
     payloads = [r["ok"] for r in results if "ok" in r]
     p = load_profile(PROFILE)
     p.current_mode = mode
-    fms = [x for x in payloads if x["identity"]["is_fms"]]
+    # The review covered the morning (Q2-Q21); later matches in the folder are left out here.
+    fms = [x for x in payloads if x["identity"]["is_fms"] and x["identity"]["label"] in REVIEW_MATCHES]
     ev = build_event("NHALT", fms, [], p)
     return {x["identity"]["label"]: x["power"] for x in fms}, ev
 

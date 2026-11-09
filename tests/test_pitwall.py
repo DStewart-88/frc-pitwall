@@ -50,7 +50,7 @@ AUTO0, AUTO1, TELE0, TELE1 = 10.0, 30.0, 33.0, 173.0
 
 
 def make_log(path, brownout_at=None, m1_connected=True, extra_key=False, event="TEST", match_type=2,
-             number=12, m1_amps=10.0, tele_end=TELE1):
+             number=12, m1_amps=10.0, tele_end=TELE1, station=None, game_data=None):
     w = LogWriter(path)
     w.put("/DriverStation/EventName", 0.0, event)
     w.put("/DriverStation/MatchType", 0.0, match_type)
@@ -59,6 +59,11 @@ def make_log(path, brownout_at=None, m1_connected=True, extra_key=False, event="
     w.put("/DriverStation/Autonomous", 0.0, False)
     w.put("/SystemStats/BrownedOut", 0.0, False)
     w.put("/M1/Connected", 0.0, m1_connected)
+    if station is not None:
+        w.put("/DriverStation/AllianceStation", 0.0, station)
+    if game_data is not None:
+        w.put("/DriverStation/GameSpecificMessage", 0.0, "")
+        w.put("/DriverStation/GameSpecificMessage", TELE0 + 3.0, game_data)
     w.put("/Shooting", 0.0, False)
     w.put("/DriverStation/Autonomous", AUTO0, True)
     w.put("/DriverStation/Enabled", AUTO0, True)
@@ -178,6 +183,88 @@ class PowerTest(Base):
         self.assertIn("<h1>Q12</h1>", page)
         self.assertIn("Where the charge went", page)
         self.assertNotIn("http://", page.replace("http://www.w3.org", ""))
+
+
+PERIODS = """
+[[period]]
+name = "Auto"
+from_left = 160
+to_left = 140
+[[period]]
+name = "Transition"
+from_left = 140
+to_left = 130
+[[period]]
+name = "Shift 1"
+from_left = 130
+to_left = 105
+hub = "inactive_if_named"
+[[period]]
+name = "Shift 2"
+from_left = 105
+to_left = 80
+hub = "active_if_named"
+[[period]]
+name = "Shift 3"
+from_left = 80
+to_left = 55
+hub = "inactive_if_named"
+[[period]]
+name = "Shift 4"
+from_left = 55
+to_left = 30
+hub = "active_if_named"
+[[period]]
+name = "End Game"
+from_left = 30
+to_left = 0
+"""
+
+
+class PeriodTest(Base):
+    def run_periods(self, **kw):
+        p = os.path.join(self.dir, "pp.toml")
+        with open(p, "w") as f:
+            f.write(PROFILE.format(mode="signed") + PERIODS)
+        path = os.path.join(self.dir, "akit_26-01-01_00-00-00_test_q12.wpilog")
+        make_log(path, **kw)
+        m = build_match(WPILog(path), load_profile(p))
+        return m, power.analyze(m)
+
+    def test_shifts_and_hub(self):
+        # Red (station 1); game data "R": red's hub goes inactive first (Shifts 1 and 3).
+        m, r = self.run_periods(station=1, game_data="R", brownout_at=TELE0 + 130)
+        T = r["totals"]
+        P = {x["name"]: x for x in T["periods"]}
+        self.assertEqual(list(P), ["Auto", "Transition", "Shift 1", "Shift 2", "Shift 3", "Shift 4", "End Game"])
+        for name, secs in (("Auto", 20), ("Transition", 10), ("Shift 1", 25), ("Shift 4", 25), ("End Game", 30)):
+            self.assertAlmostEqual(P[name]["s"], secs, delta=0.05)
+        self.assertEqual([P[n]["hub"] for n in ("Shift 1", "Shift 2", "Shift 3", "Shift 4")],
+                         [False, True, False, True])
+        self.assertTrue(P["End Game"]["hub"])
+        # Motor 2 switches from 5 A to -1 A with 80 s left: Shift 1 15 A, Shift 3 9 A.
+        self.assertAlmostEqual(P["Shift 1"]["mean_a"], 15.0, delta=0.05)
+        self.assertAlmostEqual(P["Shift 3"]["mean_a"], 9.0, delta=0.05)
+        self.assertEqual(T["alliance"], "R")
+        self.assertEqual(T["game_data"], "R")
+        self.assertAlmostEqual(T["hub_split"]["active"]["s"], 50.0, delta=0.1)
+        self.assertEqual(r["brownout"]["first_period"], "End Game")
+        names = [x["name"] for x in r["series"]["periods"]]
+        self.assertEqual(names[0], "Auto")
+        html = render(r, {**m.identity.__dict__, "label": "Q12"}, "Test bot")
+        self.assertIn("Through the match, by shift", html)
+
+    def test_other_alliance(self):
+        _, r = self.run_periods(station=5, game_data="R")       # Blue: active in Shifts 1 and 3
+        P = {x["name"]: x for x in r["totals"]["periods"]}
+        self.assertEqual([P[n]["hub"] for n in ("Shift 1", "Shift 2")], [True, False])
+
+    def test_no_game_data(self):
+        m, r = self.run_periods()
+        P = {x["name"]: x for x in r["totals"]["periods"]}
+        self.assertIsNone(P["Shift 1"]["hub"])
+        self.assertIsNone(r["totals"]["hub_split"])
+        self.assertTrue(any("game data" in f for f in m.flags))
 
 
 class SkipTest(Base):

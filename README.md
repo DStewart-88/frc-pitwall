@@ -77,6 +77,12 @@ several keys; the first one present in a log is used. Robot states (Shooting, Dr
 come from logged signals and let the report split each subsystem's charge by what the robot
 was doing.
 
+The `[[period]]` entries describe the game's match periods by match time left. For 2026 these
+are Auto, Transition, Alliance Shifts 1-4 and End Game, and each alliance shift says whether
+our hub is active in it, based on the game data (which alliance's hub goes inactive first) and
+our alliance station. Reports then break current down by shift and by hub active/inactive.
+Without periods, reports fall back to quarters of the enabled time.
+
 ## Checking the numbers
 
 `tools/validate_bob.py` reruns the Battle of the Bay (Nov 2026) hand analysis and checks

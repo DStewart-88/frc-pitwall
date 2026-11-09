@@ -55,6 +55,25 @@ class State:
     threshold: float = 0.0
 
 
+HUB_RULES = ("active", "inactive_if_named", "active_if_named")
+
+
+@dataclass
+class Period:
+    """A stretch of the match the game defines (2026: Auto, Transition, Shifts 1-4, End Game).
+
+    Bounds are match time left in seconds: the period covers to_left < time left <= from_left.
+    `hub` says whether our goal is active in it:
+      "active"             always
+      "inactive_if_named"  inactive when the game data names our alliance, else active
+      "active_if_named"    active when the game data names our alliance, else inactive
+    """
+    name: str
+    from_left: float
+    to_left: float
+    hub: str = "active"
+
+
 @dataclass
 class Unmeasured:
     name: str
@@ -72,6 +91,9 @@ class Profile:
     brownout: KeyList = field(default_factory=lambda: ["/SystemStats/BrownedOut"])
     auto_s: float = 20.0
     teleop_s: float = 140.0
+    periods: List[Period] = field(default_factory=list)   # empty: reports use quarters
+    alliance_key: KeyList = field(default_factory=lambda: ["/DriverStation/AllianceStation"])
+    game_data_key: KeyList = field(default_factory=lambda: ["/DriverStation/GameSpecificMessage"])
     grid_ms: float = 20.0
     active_amps: float = 2.0
     saturation: float = 0.98
@@ -104,6 +126,19 @@ def load_profile(path: str) -> Profile:
             setattr(p, attr, _keys(robot[attr]))
     p.auto_s = float(game.get("auto_s", p.auto_s))
     p.teleop_s = float(game.get("teleop_s", p.teleop_s))
+    for attr in ("alliance_key", "game_data_key"):
+        if attr in game:
+            setattr(p, attr, _keys(game[attr]))
+    for per in data.get("period", []):
+        hub = per.get("hub", "active")
+        if hub not in HUB_RULES:
+            raise ProfileError(f"{path}: period {per.get('name')!r} hub must be one of {', '.join(HUB_RULES)}")
+        p.periods.append(Period(name=per["name"], from_left=float(per["from_left"]),
+                                to_left=float(per["to_left"]), hub=hub))
+    p.periods.sort(key=lambda x: -x.from_left)
+    for a, b in zip(p.periods, p.periods[1:]):
+        if b.from_left > a.to_left + 1e-9:
+            raise ProfileError(f"{path}: periods {a.name!r} and {b.name!r} overlap")
     p.grid_ms = float(settings.get("grid_ms", p.grid_ms))
     p.active_amps = float(settings.get("active_amps", p.active_amps))
     p.saturation = float(settings.get("saturation", p.saturation))
