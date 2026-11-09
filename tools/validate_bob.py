@@ -16,7 +16,7 @@ from pitwall.analysis import analyze_logs, expand_paths   # noqa: E402
 from pitwall.event import build_event                    # noqa: E402
 from pitwall.profile import load_profile                 # noqa: E402
 
-PROFILE = os.path.join(os.path.dirname(__file__), "..", "profiles", "2026-comp.toml")
+PROFILE = os.path.join(os.path.dirname(__file__), "..", "pitwall", "profiles", "2026-comp.toml")
 
 # From the BOB power review, per match: Wh, Ah, mean W, peak 1 s W, min V,
 # s left at first brownout, brownout onsets.

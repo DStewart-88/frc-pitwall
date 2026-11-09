@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pitwall"
-version = "0.2.0"
+version = "0.3.0"
 description = "FRC robot logs in, team-readable reports out"
 readme = "README.md"
 license = "BSD-3-Clause"
@@ -18,4 +18,5 @@ pitwall = "pitwall.cli:main"
 include = ["pitwall*"]
 
 [tool.setuptools.package-data]
+"pitwall" = ["profiles/*.toml"]
 "pitwall.report" = ["fonts/*.woff2", "fonts/*.txt"]
