@@ -60,10 +60,11 @@ def page(title: str, body: str, token: str, active: str = "", extra_head: str = 
     nav = "".join(
         f'<a class="nav{" on" if active == key else ""}" href="{href}">{label}</a>'
         for key, href, label in (("events", "/", "Events"), ("profiles", "/profiles", "Robot profiles")))
+    nav += '<a class="nav" href="#" onclick="pwQuit();return false;" title="Stop Pitwall on this computer">Quit</a>'
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="pitwall-token" content="{esc(token)}">
-<title>{esc(title)} · Pitwall</title>
+<title>{esc(title)} · Pitwall</title><link rel="icon" href="/icon.svg" type="image/svg+xml">
 <style>{base_css()}{APP_CSS}</style><script>{COMMON_JS}</script>{extra_head}</head>
 <body>
 <header><div class="in"><span class="brand">PITWALL</span><span class="meta">{nav}</span></div></header>
@@ -79,6 +80,9 @@ function api(method,url,body){
       return r.json().then(function(j){if(!r.ok)throw new Error(j.error||r.statusText);return j;});});
 }
 function el(id){return document.getElementById(id);}
+function pwQuit(){if(!confirm('Stop Pitwall? Watching for new logs stops too. Open it again from the app menu.'))return;
+  api('POST','/api/quit',{}).finally(function(){document.body.innerHTML='<main><section class="card empty"><h1>Pitwall has stopped</h1>'+
+    '<p>You can close this tab. Open Pitwall again from the app menu.</p></section></main>';});}
 function escHtml(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function statusText(s){
   if(!s)return ['','Idle'];
@@ -92,15 +96,15 @@ function statusText(s){
   return ['ok','Up to date'];
 }
 // Folder picker: places, folders, "use this folder"
-function FolderPicker(root,onPick){
-  var cur=null;
+function FolderPicker(root,onPick,opts){
+  opts=opts||{};var kind=opts.kind||'logs',cur=null;
   root.innerHTML='<div class="picker"><div class="places"></div><div class="crumb"></div><ul></ul>'+
     '<div class="foot"><span class="count"></span><span style="flex:1"></span>'+
-    '<button type="button" class="btn primary use">Use this folder</button></div></div>';
+    '<button type="button" class="btn primary use">'+(opts.useLabel||'Use this folder')+'</button></div></div>';
   var places=root.querySelector('.places'),crumb=root.querySelector('.crumb'),ul=root.querySelector('ul'),
       count=root.querySelector('.count'),use=root.querySelector('.use');
   function go(path){
-    api('GET','/api/browse?path='+encodeURIComponent(path||'')).then(function(d){
+    api('GET','/api/browse?kind='+kind+'&path='+encodeURIComponent(path||'')).then(function(d){
       cur=d;
       places.innerHTML='';
       d.places.forEach(function(p){var b=document.createElement('button');b.type='button';b.className='btn small';
@@ -114,12 +118,18 @@ function FolderPicker(root,onPick){
       d.folders.forEach(function(f){var li=document.createElement('li'),b=document.createElement('button');b.type='button';
         b.textContent='📁 '+f.name;b.onclick=function(){go(f.path);};li.appendChild(b);ul.appendChild(li);});
       if(!d.folders.length&&!d.error)ul.innerHTML='<li style="padding:12px;color:#5a6479">No folders inside.</li>';
-      count.textContent=d.logs_below?(d.logs_below+' log file'+(d.logs_below===1?'':'s')+' in this folder'+(d.logs_below>d.logs?' and the folders inside it':'')):'No log files here';
-      use.disabled=!d.logs_below;
+      if(kind==='code'){
+        count.innerHTML=d.gradle?'<b>Robot project</b> ('+d.logs_below+' Java files)':
+          (d.logs_below?d.logs_below+' Java files here. Pick the folder with build.gradle if you can.':'No Java code here');
+        use.disabled=!d.logs_below;
+      }else{
+        count.textContent=d.logs_below?(d.logs_below+' log file'+(d.logs_below===1?'':'s')+' in this folder'+(d.logs_below>d.logs?' and the folders inside it':'')):'No log files here';
+        use.disabled=!d.logs_below;
+      }
     }).catch(function(e){crumb.textContent=e.message;});
   }
-  use.onclick=function(){if(cur)onPick(cur.path,cur.logs_below);};
-  go('');
+  use.onclick=function(){if(cur)onPick(cur.path,cur.logs_below,cur);};
+  go(opts.start||'');
   return {go:go};
 }
 """
@@ -131,9 +141,10 @@ def home(events: List[Dict[str, Any]], status: Dict[str, Dict[str, Any]], profil
          token: str) -> str:
     if not profiles:
         body = """<div class="card empty"><h1>Welcome to Pitwall</h1>
-<p>First, tell Pitwall about your robot: which motors it has and where the logs keep their data. That's a robot profile.
-It's saved on this computer and used for every event.</p>
-<p><a class="btn primary big-btn" href="/profiles">Set up a robot profile</a></p></div>"""
+<p>First, tell Pitwall about your robot. It reads the robot code to find the motors and where the logs keep their data,
+then you check what it found. That's saved on this computer and used for every event.</p>
+<p><a class="btn primary big-btn" href="/profiles/new">Set up your robot</a></p>
+<p class="hint">You'll need the robot code and a log from the robot. <a href="/profiles">Other ways to add a robot</a></p></div>"""
         return page("Pitwall", body, token, "events")
     cards = []
     for e in events:
@@ -318,13 +329,14 @@ def profiles_page(profiles: List[Dict[str, Any]], used: Dict[str, List[str]], bu
                     f'<button class="btn small danger" data-del="{esc(p["id"])}">Delete</button></td></tr>')
     table = (f'<table class="list"><thead><tr><th>Robot</th><th>Contents</th><th>Used by</th><th></th></tr></thead>'
              f'<tbody>{"".join(rows)}</tbody></table>') if rows else '<p class="muted">No robot profiles on this computer yet.</p>'
-    ex = "".join(f'<button class="btn" data-builtin="{esc(b)}">Use the example: {esc(b)}</button> ' for b in builtins)
+    ex = "".join(f'<button class="btn small" data-builtin="{esc(b)}">Use the example: {esc(b)}</button> ' for b in builtins)
     body = f"""<div><p class="eyebrow">Robot profiles</p><h1>Robots on this computer</h1></div>
 <section class="card">{table}</section>
 <section class="card"><h2>Add a robot</h2>
-<p class="lead">A profile lists the robot's motors, which subsystem each belongs to, and the log keys with its data.
-Profiles stay on this computer. A guided setup that reads the robot code is coming; for now, import a profile file or start from the example.</p>
-<p><label class="btn primary">Import a profile file (.toml)<input type="file" id="file" accept=".toml" hidden></label> {ex}</p>
+<p class="lead">A profile lists the robot's motors, which group each belongs to, and the log keys with its data.
+Profiles stay on this computer.</p>
+<p><a class="btn primary big-btn" href="/profiles/new">Set up from the robot code</a></p>
+<p class="hint">Or: <label class="btn small">Import a profile file (.toml)<input type="file" id="file" accept=".toml" hidden></label> {ex}</p>
 <div id="msg"></div></section>
 <script>
 function done(){{location.reload();}}
@@ -340,7 +352,7 @@ document.querySelectorAll('[data-del]').forEach(function(b){{b.onclick=function(
     return page("Robot profiles", body, token, "profiles")
 
 
-def profile_view(pid: str, prof, token: str) -> str:
+def profile_view(pid: str, prof, token: str, just_made: bool = False) -> str:
     subs = {s.id: s for s in prof.subsystems}
     from ..report.html import color_for
     mrows = "".join(
@@ -352,7 +364,9 @@ def profile_view(pid: str, prof, token: str) -> str:
     states = "".join(f"<li>{esc(s.name)}</li>" for s in prof.states) or "<li>None</li>"
     periods = "".join(f"<li>{esc(p.name)}: {p.from_left:g}–{p.to_left:g} s left"
                       f"{'' if p.hub == 'active' else ' (hub depends on the match)'}</li>" for p in prof.periods) or "<li>Quarters of the match</li>"
-    body = f"""<div><p class="eyebrow">Robot profile</p><h1>{esc(prof.name)}</h1></div>
+    made = ('<div class="msg ok">Saved. This robot is ready: <a href="/events/new">make an event</a> with its logs.</div>'
+            if just_made else "")
+    body = f"""<div><p class="eyebrow">Robot profile</p><h1>{esc(prof.name)}</h1></div>{made}
 <section class="card"><h2>Motors</h2><div class="scroll"><table class="list"><thead><tr><th>Motor</th><th>Subsystem</th>
 <th class="r">CAN</th><th>Supply current key</th></tr></thead><tbody>{mrows}</tbody></table></div></section>
 <div class="grid2"><section class="card"><h2>Robot states</h2><ul class="plain">{states}</ul></section>

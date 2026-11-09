@@ -8,6 +8,7 @@ one at a time; the analysis cache means a rebuild after one new match only reads
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -245,6 +246,9 @@ class Worker:
         shutil.rmtree(tmp, ignore_errors=True)
         os.makedirs(tmp)
         write_event(ev, g, tmp)
+        if not self.store.get_event(eid):          # deleted while we were building
+            shutil.rmtree(tmp, ignore_errors=True)
+            return
         shutil.rmtree(old, ignore_errors=True)
         if os.path.exists(rdir):
             os.replace(rdir, old)
@@ -257,7 +261,8 @@ class Worker:
         if not ev_cfg["name"]:
             self.store.save_event(eid, {"name": ev["name"]})
         after = json.loads(json.dumps((ev["name"], ev["first_stamp"], ev["averages"])))
-        self._rebuild_dependents(eid, ev, changed=list(after) != (list(before) if before else None))
+        self._rebuild_dependents(eid, ev_cfg["profile"], ev,
+                                 changed=list(after) != (list(before) if before else None))
 
     def _summaries(self) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
         out = []
@@ -282,11 +287,10 @@ class Worker:
             return None
         return max(earlier, key=lambda es: es[1].get("first_stamp", ""))[1]
 
-    def _rebuild_dependents(self, eid: str, ev: Dict[str, Any], changed: bool) -> None:
+    def _rebuild_dependents(self, eid: str, profile: str, ev: Dict[str, Any], changed: bool) -> None:
         """Later events that compare with this one need their comparison refreshed."""
         if not changed:
             return
-        profile = self.store.get_event(eid)["profile"]
         for e, s in self._summaries():
             if e["id"] == eid:
                 continue
@@ -332,33 +336,63 @@ def drives() -> List[Dict[str, str]]:
     return uniq
 
 
-def list_folder(path: str) -> Dict[str, Any]:
-    """Subfolders of `path` and how many logs are directly inside, for the folder picker."""
+def list_folder(path: str, kind: str = "logs") -> Dict[str, Any]:
+    """Subfolders of `path`, for the folder picker. kind="logs" counts .wpilog files; kind="code"
+    counts .java files and notes a build.gradle (the top of a robot project)."""
     path = os.path.abspath(os.path.expanduser(path or "~"))
     entries = []
-    logs = 0
     try:
         names = sorted(os.listdir(path), key=str.lower)
     except OSError as e:
-        return {"path": path, "parent": os.path.dirname(path), "folders": [], "logs": 0, "error": str(e)}
+        return {"path": path, "parent": os.path.dirname(path), "folders": [], "logs": 0, "logs_below": 0,
+                "error": str(e), "kind": kind}
+    ext = ".java" if kind == "code" else ".wpilog"
+    here = 0
     for n in names:
         if n.startswith("."):
             continue
         p = os.path.join(path, n)
         if os.path.isdir(p):
             entries.append({"name": n, "path": p})
-        elif n.lower().endswith(".wpilog"):
-            logs += 1
+        elif n.lower().endswith(ext):
+            here += 1
     parent = os.path.dirname(path)
-    return {"path": path, "parent": parent if parent != path else None, "folders": entries, "logs": logs,
-            "logs_below": _count_logs(path), "error": None}
+    return {"path": path, "parent": parent if parent != path else None, "folders": entries, "logs": here,
+            "logs_below": _count(path, ext, depth=12 if kind == "code" else 3), "error": None, "kind": kind,
+            "gradle": os.path.isfile(os.path.join(path, "build.gradle"))}
 
 
-def _count_logs(path: str, limit: int = 2000) -> int:
+def _count(path: str, ext: str, limit: int = 2000, depth: int = 3) -> int:
     n = 0
+    base = path.rstrip(os.sep).count(os.sep)
     for root, dirs, files in os.walk(path):
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
-        n += sum(1 for f in files if f.lower().endswith(".wpilog"))
-        if n >= limit or root.count(os.sep) - path.count(os.sep) > 3:
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("build", "bin", "node_modules")]
+        n += sum(1 for f in files if f.lower().endswith(ext))
+        if n >= limit or root.count(os.sep) - base >= depth:
             dirs[:] = []
     return n
+
+
+def logs_in(path: str, limit: int = 400) -> List[Dict[str, Any]]:
+    """.wpilog files under `path`, newest first, for picking a sample log."""
+    out = []
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for f in files:
+            if f.lower().endswith(".wpilog"):
+                p = os.path.join(root, f)
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                out.append({"path": p, "name": f, "bytes": st.st_size, "mtime": st.st_mtime,
+                            "match": bool(re.search(r"_[qe]\d+\.wpilog$", f, re.I))})
+        if len(out) >= limit:
+            break
+    # A real match log is the best sample: it exercises every mechanism
+    def stamp(x):          # the robot's own date and time in the file name, else the file's time
+        m = re.search(r"(\d{2}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})", x["name"])
+        return m.group(1) if m else str(x["mtime"])
+    out.sort(key=lambda x: stamp(x), reverse=True)
+    out.sort(key=lambda x: not x["match"])            # stable: match logs first, newest first
+    return out

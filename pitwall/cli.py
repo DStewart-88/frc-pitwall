@@ -111,6 +111,14 @@ def cmd_event(a) -> int:
 
 def cmd_app(a) -> int:
     from .app.server import serve
+    from .app.store import default_data_dir
+    if not sys.stdout or not sys.stdout.isatty():
+        # Started from the app menu: no terminal, so keep the output in the data folder.
+        root = a.data_dir or default_data_dir()
+        os.makedirs(root, exist_ok=True)
+        log = open(os.path.join(root, "pitwall.log"), "a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = log
+        print(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} pitwall {__version__}")
     serve(a.data_dir, a.port, not a.no_browser, max(1, a.jobs))
     return 0
 
