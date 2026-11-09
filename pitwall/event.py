@@ -313,9 +313,10 @@ def observations(ev: Dict[str, Any]) -> List[Dict[str, str]]:
         if B["with_brownout"]:
             med = B["median_first_left_s"]
             sev = "act" if (med or 0) > 20 else "watch"
+            when = (f"; the first brownout came with {med:.1f} s left (median), "
+                    f"{B['earliest_first_left_s']:.1f} s left at the earliest" if med is not None else "")
             add(sev, "brownout",
-                f"Browned out in {B['with_brownout']} of {B['matches']} counted matches; the first brownout "
-                f"came with {med:.1f} s left (median), {B['earliest_first_left_s']:.1f} s left at the earliest.")
+                f"Browned out in {B['with_brownout']} of {B['matches']} counted matches{when}.")
         else:
             add("info", "brownout", f"No brownouts in {B['matches']} counted matches.")
 
