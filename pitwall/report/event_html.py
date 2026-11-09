@@ -271,6 +271,128 @@ def subsystem_compare_svg(C: Dict[str, Any]) -> str:
     return "".join(out)
 
 
+# ---------------------------------------------------------------- donut: where the charge goes
+
+def _arc(cx: float, cy: float, r_out: float, r_in: float, a0: float, a1: float) -> str:
+    """Ring segment from angle a0 to a1 (radians, 0 = 12 o'clock, clockwise)."""
+    import math
+    if a1 - a0 >= 2 * math.pi - 1e-6:            # a full ring: two halves (one arc can't close on itself)
+        mid = a0 + math.pi
+        return _arc(cx, cy, r_out, r_in, a0, mid) + " " + _arc(cx, cy, r_out, r_in, mid, a1)
+
+    def pt(r, a):
+        return cx + r * math.sin(a), cy - r * math.cos(a)
+    large = 1 if a1 - a0 > math.pi else 0
+    x0, y0 = pt(r_out, a0)
+    x1, y1 = pt(r_out, a1)
+    x2, y2 = pt(r_in, a1)
+    x3, y3 = pt(r_in, a0)
+    return (f"M{x0:.2f},{y0:.2f} A{r_out},{r_out} 0 {large} 1 {x1:.2f},{y1:.2f} "
+            f"L{x2:.2f},{y2:.2f} A{r_in},{r_in} 0 {large} 0 {x3:.2f},{y3:.2f} Z")
+
+
+def donut_svg(parts: List[Dict[str, Any]], total: float, title: str, sub: str, which: str) -> str:
+    """parts: [{id, name, color, ah}] in drawing order. Each segment carries its figures for the tooltip."""
+    import math
+    size, r_out, r_in = 220, 100, 64
+    c = size / 2
+    out = [f'<svg viewBox="0 0 {size} {size}" class="donut" role="img" '
+           f'aria-label="{esc(title)}: charge per match by group, {total:.2f} Ah in all">']
+    pos = sum(max(0.0, p["ah"]) for p in parts)
+    a = 0.0
+    for p in parts:
+        v = max(0.0, p["ah"])
+        if pos <= 0 or v <= 0:
+            continue
+        span = v / pos * 2 * math.pi
+        share = v / pos
+        out.append(f'<path class="seg" d="{_arc(c, c, r_out, r_in, a, a + span)}" fill="{color_for(p["color"])}" '
+                   f'stroke="#ffffff" stroke-width="2" stroke-linejoin="round" data-sub="{esc(p["id"])}" '
+                   f'data-name="{esc(p["name"])}" data-ah="{v:.2f}" data-pct="{share * 100:.0f}" data-which="{esc(which)}">'
+                   f'<title>{esc(p["name"])}: {v:.2f} Ah per match, {share:.0%} of the total ({esc(title)})</title></path>')
+        a += span
+    out.append(f'<text x="{c}" y="{c - 4}" text-anchor="middle" class="dn-big">{total:.2f}</text>'
+               f'<text x="{c}" y="{c + 16}" text-anchor="middle" class="dn-small">Ah per match</text></svg>')
+    return (f'<figure class="dn"><div class="dn-title">{esc(title)}</div>{"".join(out)}'
+            f'<figcaption>{esc(sub)}</figcaption></figure>')
+
+
+def charge_split_html(ev: Dict[str, Any]) -> str:
+    A, C = ev["averages"], ev.get("compare")
+    if not A.get("n"):
+        return ""
+    subs = sorted(ev["subsystem_info"], key=lambda s: -A["subsystems"][s["id"]]["ah"])
+    cur = [{"id": s["id"], "name": s["name"], "color": s["color"], "ah": A["subsystems"][s["id"]]["ah"]} for s in subs]
+    cur_total = sum(max(0.0, p["ah"]) for p in cur)
+    donuts = donut_svg(cur, A["ah"] or 0.0, ev["name"], f'Average of {A["n"]} matches', "cur")
+    prev_by = {}
+    prev_total = 0.0
+    if C:
+        prev_by = {r["key"]: r["prev"] for r in C["subsystems"] if r["prev"] is not None}
+        prev = [{"id": p["id"], "name": p["name"], "color": p["color"], "ah": prev_by.get(p["id"], 0.0)} for p in cur]
+        prev_total = sum(max(0.0, p["ah"]) for p in prev)
+        prev_ah = next((r["prev"] for r in C["rows"] if r["key"] == "ah"), None) or prev_total
+        donuts += donut_svg(prev, prev_ah, C["name"], f'Average of {C["matches"]} matches', "prev")
+    head = '<th>Group</th><th class="r">Ah</th><th class="r">Share</th>'
+    if C:
+        head += f'<th class="r">{esc(C["name"])}</th><th class="r">Share</th>'
+    rows = []
+    for p in cur:
+        share = max(0.0, p["ah"]) / cur_total if cur_total else 0.0
+        cells = (f'<td><i class="sw" style="background:{color_for(p["color"])}"></i>{esc(p["name"])}</td>'
+                 f'<td class="r num">{p["ah"]:.2f}</td><td class="r num">{share:.0%}</td>')
+        if C:
+            pv = prev_by.get(p["id"])
+            ps = (max(0.0, pv) / prev_total) if (pv is not None and prev_total) else None
+            cells += (f'<td class="r num">{fmt(pv, 2)}</td>'
+                      f'<td class="r num">{"—" if ps is None else f"{ps:.0%}"}</td>')
+        rows.append(f'<tr data-sub="{esc(p["id"])}">{cells}</tr>')
+    lead = ("Each group's share of the charge an average match used"
+            + (f", here and at {esc(C['name'])}. Slices are in the same order and color in both rings." if C else ".")
+            + " Hover a slice or a row for its figures.")
+    return (f'<section class="card"><h2>Where the charge goes</h2><p class="lead">{lead}</p>'
+            f'<div class="split"><div class="dns">{donuts}</div>'
+            f'<div class="scroll"><table class="dn-table"><thead><tr>{head}</tr></thead><tbody>{"".join(rows)}</tbody>'
+            f'</table></div></div></section>')
+
+
+DONUT_CSS = """
+.split{display:grid;grid-template-columns:minmax(0,auto) minmax(300px,1fr);gap:24px 36px;align-items:center}
+@media (max-width:900px){.split{grid-template-columns:1fr}}
+.dns{display:flex;flex-wrap:wrap;gap:24px;justify-content:center}
+figure.dn{margin:0;text-align:center} .dn-title{font:700 14px Arial,sans-serif;margin-bottom:6px}
+figure.dn figcaption{font-size:12px;color:var(--muted);margin-top:4px}
+svg.donut{width:220px;height:220px;display:block}
+svg.donut .seg{cursor:pointer;transition:opacity .12s}
+.dn-big{font:700 26px Arial,sans-serif;fill:var(--navy)} .dn-small{font:12px Arial,sans-serif;fill:var(--muted)}
+.split.hl svg.donut .seg{opacity:.25} .split.hl svg.donut .seg.on{opacity:1}
+table.dn-table tr{cursor:default} table.dn-table tr.on td{background:#f1f3f8}
+"""
+
+DONUT_JS = """
+(function(){
+  var tip=document.getElementById('tip'),box=document.querySelector('.split');
+  if(!box)return;
+  function hl(sub){box.classList.toggle('hl',!!sub);
+    box.querySelectorAll('.seg').forEach(function(s){s.classList.toggle('on',s.dataset.sub===sub);});
+    box.querySelectorAll('tr[data-sub]').forEach(function(r){r.classList.toggle('on',r.dataset.sub===sub);});}
+  function show(ev,html){tip.innerHTML=html;tip.style.display='block';
+    var x=ev.clientX+14,y=ev.clientY+12;if(x+tip.offsetWidth>innerWidth-8)x=ev.clientX-tip.offsetWidth-14;
+    if(y+tip.offsetHeight>innerHeight-8)y=innerHeight-tip.offsetHeight-8;tip.style.left=x+'px';tip.style.top=y+'px';}
+  function info(sub){var out='';box.querySelectorAll('.seg[data-sub="'+sub+'"]').forEach(function(s){
+    var t=s.closest('figure').querySelector('.dn-title').textContent;
+    out+='<div class="r"><span>'+t+'</span><b>'+s.dataset.ah+' Ah · '+s.dataset.pct+'%</b></div>';});return out;}
+  box.querySelectorAll('.seg').forEach(function(s){
+    s.addEventListener('mousemove',function(e){hl(s.dataset.sub);
+      show(e,'<div style="margin-bottom:4px"><b>'+s.dataset.name+'</b> <span style="color:#5a6479">per match</span></div>'+info(s.dataset.sub));});
+    s.addEventListener('mouseleave',function(){hl(null);tip.style.display='none';});});
+  box.querySelectorAll('tr[data-sub]').forEach(function(r){
+    r.addEventListener('mouseenter',function(){hl(r.dataset.sub);});
+    r.addEventListener('mouseleave',function(){hl(null);});});
+})();
+"""
+
+
 # ---------------------------------------------------------------- shifts
 
 def shift_card_html(ev: Dict[str, Any], shoot: Optional[str]) -> str:
@@ -482,10 +604,10 @@ For time left at first brownout, a bigger number means the battery gave out earl
         date = f"{date} – {last}"
 
     return PAGE.format(
-        css=base_css(), extra_css=EXTRA_CSS, title=esc(ev["name"]), code=esc(ev["code"]),
+        css=base_css(), extra_css=EXTRA_CSS, donut_css=DONUT_CSS, donut_js=DONUT_JS, title=esc(ev["name"]), code=esc(ev["code"]),
         date=esc(date), profile=esc(ev["profile"]), builds=esc(", ".join(ev["builds"]) or "unknown"),
         n_matches=len(ev["matches"]), n=n, stats=stat_html, legend=legend,
-        charge_chart=charge_by_match_svg(ev, links),
+        charge_chart=charge_by_match_svg(ev, links), charge_split=charge_split_html(ev),
         brownout_chart=brownout_svg(ev, series_by_label, links),
         match_rows="".join(mrows), shoot_head=esc(shoot or "—"),
         s_head=s_head, sub_rows="".join(srows), compare=compare_html,
@@ -513,6 +635,7 @@ PAGE = """<!doctype html>
 <style>
 {css}
 {extra_css}
+{donut_css}
 </style>
 </head>
 <body>
@@ -521,6 +644,8 @@ PAGE = """<!doctype html>
 <main>
 <div><p class="eyebrow">{code} · {date}</p><h1>{title}</h1></div>
 <section class="stats">{stats}</section>
+
+{charge_split}
 
 <section class="card"><h2>Charge by match</h2>
 <p class="lead">Charge each match used, by subsystem. Faded matches aren't counted in the averages; the table below says why. Click a match for its full report.</p>
@@ -554,6 +679,8 @@ PAGE = """<!doctype html>
 a motor was missing from the CAN bus, or it drew under half the event's typical charge; Pitwall shows it anyway.
 {mode_note} The control system (roboRIO, radio, cameras, CANivore, Pigeon) isn't logged, so totals are slightly low.</footer>
 </main>
+<div class="tip" id="tip"></div>
+<script>{donut_js}</script>
 </body>
 </html>
 """

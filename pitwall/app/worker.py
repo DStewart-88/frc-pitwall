@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..analysis import analyze_logs
 from ..event import attach_comparison, strip_for_compare
-from ..eventrun import group_results, make_event, write_event
+from ..eventrun import REPORT_VERSION, group_results, make_event, write_event
 from ..profile import ProfileError, load_profile
 from .store import Store
 
@@ -93,6 +93,12 @@ class Worker:
         summary = os.path.join(self.store.report_dir(eid), "event.json")
         if not os.path.exists(summary):
             return bool(self.store.event_logs(eid))
+        try:
+            with open(summary, encoding="utf-8") as f:
+                if json.load(f).get("report_version") != REPORT_VERSION:
+                    return True                    # made by an older Pitwall: redraw it
+        except (OSError, ValueError):
+            return True
         built = os.path.getmtime(summary)
         cfg = os.path.join(self.store.event_dir(eid), "config.json")
         newest = max([os.path.getmtime(p) for p in self.store.event_logs(eid)] + [os.path.getmtime(cfg)])

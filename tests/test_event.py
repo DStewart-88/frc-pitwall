@@ -72,6 +72,8 @@ class EventTest(unittest.TestCase):
         with open(os.path.join(self.out, "BBB", "index.html"), encoding="utf-8") as f:
             html = f.read()
         self.assertIn("Compared with First Event", html)
+        self.assertIn("Where the charge goes", html)
+        self.assertEqual(html.count('class="donut"'), 2)                 # this event and the previous one
         self.assertIn('href="matches/akit_26-02-01_11-00-00_bbb_q1.html"', html)
         self.assertTrue(os.path.exists(os.path.join(self.out, "BBB", "matches", "akit_26-02-01_11-00-00_bbb_q1.html")))
 
