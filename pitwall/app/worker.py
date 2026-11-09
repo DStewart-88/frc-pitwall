@@ -30,6 +30,17 @@ def _now() -> float:
     return time.time()
 
 
+def _retry(fn, tries: int = 20, wait_s: float = 0.25):
+    """Windows won't rename a folder while a file in it is open (a page being served): retry briefly."""
+    for k in range(tries):
+        try:
+            return fn()
+        except PermissionError:
+            if k == tries - 1:
+                raise
+            time.sleep(wait_s)
+
+
 class Worker:
     def __init__(self, store: Store, cache_dir: Optional[str], jobs: int = 2, poll_s: float = POLL_S):
         self.store = store
@@ -256,9 +267,8 @@ class Worker:
             shutil.rmtree(tmp, ignore_errors=True)
             return
         shutil.rmtree(old, ignore_errors=True)
-        if os.path.exists(rdir):
-            os.replace(rdir, old)
-        os.replace(tmp, rdir)
+        _retry(lambda: os.path.exists(rdir) and os.replace(rdir, old))
+        _retry(lambda: os.replace(tmp, rdir))
         shutil.rmtree(old, ignore_errors=True)
         with self._lock:
             s = self._st(eid)
@@ -311,9 +321,10 @@ def drives() -> List[Dict[str, str]]:
     home = os.path.expanduser("~")
     out.append({"label": "Home", "path": home})
     for name in ("Documents", "Desktop", "Downloads"):
-        p = os.path.join(home, name)
-        if os.path.isdir(p):
-            out.append({"label": name, "path": p})
+        for p in (os.path.join(home, name), os.path.join(home, "OneDrive", name)):   # OneDrive moves these on Windows
+            if os.path.isdir(p):
+                out.append({"label": name, "path": p})
+                break
     if os.name == "nt":
         import string
         for letter in string.ascii_uppercase:
@@ -368,10 +379,13 @@ def list_folder(path: str, kind: str = "logs") -> Dict[str, Any]:
             "gradle": os.path.isfile(os.path.join(path, "build.gradle"))}
 
 
-def _count(path: str, ext: str, limit: int = 2000, depth: int = 3) -> int:
+def _count(path: str, ext: str, limit: int = 2000, depth: int = 3, budget_s: float = 1.5) -> int:
     n = 0
     base = path.rstrip(os.sep).count(os.sep)
+    stop = time.time() + budget_s        # a drive root (C:\) would otherwise walk the whole system
     for root, dirs, files in os.walk(path):
+        if time.time() > stop:
+            break
         dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("build", "bin", "node_modules")]
         n += sum(1 for f in files if f.lower().endswith(ext))
         if n >= limit or root.count(os.sep) - base >= depth:
