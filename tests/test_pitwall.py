@@ -163,6 +163,10 @@ class PowerTest(Base):
         B = r["brownout"]
         self.assertEqual(B["episodes"], 1)
         self.assertAlmostEqual(B["first_time_left_s"], 40.0, delta=0.05)
+        # 120 s enabled before it: motor 1 at 10 A, motor 2 at 5 A for 80 s then -1 A for 40 s
+        self.assertAlmostEqual(B["ah_before_first"], (1200 + 400 - 40) / 3600, delta=0.002)
+        self.assertAlmostEqual(B["ah_after_first"], (400 - 40) / 3600, delta=0.002)
+        self.assertAlmostEqual(B["margin_v"], 12.0 - 6.75, delta=0.01)
         _, r = self.run_power(brownout_at=AUTO0 + 5.0)
         self.assertAlmostEqual(r["brownout"]["first_time_left_s"], 155.0, delta=0.05)
 

@@ -73,6 +73,7 @@ class EventTest(unittest.TestCase):
             html = f.read()
         self.assertIn("Compared with First Event", html)
         self.assertIn("Where the charge goes", html)
+        self.assertIn("Charge before the first brownout", html)
         self.assertEqual(html.count('class="donut"'), 1)                 # one donut: this event outside,
         self.assertIn('data-which="prev"', html)                          # the previous event as the inner ring
         self.assertIn('href="matches/akit_26-02-01_11-00-00_bbb_q1.html"', html)
@@ -106,6 +107,8 @@ class EventTest(unittest.TestCase):
         B = self.ev_a["brownout"]
         self.assertEqual((B["with_brownout"], B["matches"]), (1, 3))
         self.assertAlmostEqual(B["median_first_left_s"], 10.0, delta=0.1)
+        self.assertAlmostEqual(B["median_ah_before_first"], (1500 + 400 - 70) / 3600, delta=0.003)
+        self.assertAlmostEqual(B["max_ah_no_brownout"], m1_ah(10) + M2_AH, delta=0.003)
         Bb = self.ev_b["brownout"]
         self.assertEqual((Bb["with_brownout"], Bb["matches"]), (3, 3))
         self.assertAlmostEqual(Bb["median_first_left_s"], 40.0, delta=0.1)

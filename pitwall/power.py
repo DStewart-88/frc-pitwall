@@ -200,6 +200,10 @@ def analyze(m: Match) -> Dict[str, Any]:
         return None
 
     en_v = [m.vbat[i] for i in idx]
+    # Charge used before the first brownout, and after it (how far past the battery's limit the match went)
+    ah_before = None
+    if first is not None:
+        ah_before = sum(total_i[i] for i in idx if m.grid[i] < first) * to_h
     brownout = {
         "key": bkey, "onsets": len(onsets), "episodes": len(episodes),
         "first_t": (first - m.t0) if first is not None else None,
@@ -210,6 +214,9 @@ def analyze(m: Match) -> Dict[str, Any]:
         "episode_time_left": [left_at(o) for o in episodes],
         "seconds_below_threshold": sum(1 for i in idx if m.vbat[i] < BROWNOUT_V) * dt,
         "threshold_v": BROWNOUT_V,
+        "ah_before_first": ah_before,
+        "ah_after_first": (ah - ah_before) if ah_before is not None else None,
+        "margin_v": min(en_v) - BROWNOUT_V,       # how close the lowest battery voltage came to the line
     }
 
     unmeasured = [{"name": u.name, "estimate_amps": u.estimate_amps,
