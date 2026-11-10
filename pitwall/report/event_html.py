@@ -271,6 +271,100 @@ def subsystem_compare_svg(C: Dict[str, Any]) -> str:
     return "".join(out)
 
 
+# ---------------------------------------------------------------- battery: charge before the first brownout
+
+def battery_svg(ev: Dict[str, Any], links: Dict[str, str]) -> str:
+    """Per match: charge used before the first brownout, and after it; or, with no brownout, all of
+    it and how close the battery came. Measured, not projected."""
+    ms = ev["matches"]
+    if not ms:
+        return ""
+    B = ev["brownout"]
+    med = B.get("median_ah_before_first")
+    vmax = max([m["ah"] for m in ms] + [med or 0, 1e-9]) * 1.04
+    label_w, right_w, row_h, bar_h, top = 150, 380, 30, 16, 28
+    width = 1100
+    plot_w = width - label_w - right_w - 16
+    height = top + len(ms) * row_h + 26
+
+    def X(ah: float) -> float:
+        return label_w + max(0.0, ah) / vmax * plot_w
+
+    out = [f'<svg viewBox="0 0 {width} {height}" class="chart" role="img" '
+           f'aria-label="Charge used in each match before and after the first brownout">']
+    for tick in _nice_ah_ticks(vmax):
+        out.append(f'<line x1="{X(tick):.1f}" x2="{X(tick):.1f}" y1="{top - 6}" y2="{top + len(ms) * row_h}" '
+                   f'stroke="{INK_LINE}"/><text x="{X(tick):.1f}" y="{top + len(ms) * row_h + 16}" '
+                   f'text-anchor="middle" class="muted small">{tick:g} Ah</text>')
+    if med:
+        out.append(f'<line x1="{X(med):.1f}" x2="{X(med):.1f}" y1="{top - 12}" y2="{top + len(ms) * row_h}" '
+                   f'stroke="{RED}" stroke-dasharray="4 4" stroke-width="1.5"/>'
+                   f'<text x="{X(med) + 6:.1f}" y="{top - 12}" class="small" fill="{RED}">'
+                   f'median first brownout, {med:.2f} Ah</text>')
+    for k, m in enumerate(ms):
+        y = top + k * row_h
+        yb = y + (row_h - bar_h) / 2
+        op = 1.0 if m["counted"] else 0.35
+        href = links.get(m["label"])
+        lab = esc(m["label"])
+        out.append(f'<a href="{esc(href)}"><text x="{label_w - 12}" y="{y + row_h / 2 + 5}" text-anchor="end" '
+                   f'class="lbl link">{lab}</text></a>' if href else
+                   f'<text x="{label_w - 12}" y="{y + row_h / 2 + 5}" text-anchor="end" class="lbl">{lab}</text>')
+        b = m["brownout"]
+        before, after = b.get("ah_before_first"), b.get("ah_after_first")
+        if b["episodes"] and before is not None:
+            w1, w2 = X(before) - label_w, X(m["ah"]) - X(before)
+            tip = f'{m["label"]}: {before:.2f} Ah before the first brownout, then {after:.2f} Ah more'
+            out.append(f'<g opacity="{op}"><title>{esc(tip)}</title>'
+                       f'<rect x="{label_w}" y="{yb}" width="{max(0.0, w1):.1f}" height="{bar_h}" fill="{NAVY}"/>')
+            if w2 > 0.3:
+                out.append(f'<path d="{_bar_path(X(before) + 1, yb, max(0.0, w2 - 1), bar_h, 3)}" fill="{RED}"/>')
+            out.append("</g>")
+            txt = (f'<tspan class="num">{before:.2f} Ah</tspan><tspan class="muted"> before the first brownout, '
+                   f'then </tspan><tspan class="num" fill="{RED}">+{after:.2f} Ah</tspan>')
+        else:
+            mv = m["min_v"]
+            tip = f'{m["label"]}: {m["ah"]:.2f} Ah with no brownout; lowest battery {mv:.2f} V'
+            out.append(f'<g opacity="{op}"><title>{esc(tip)}</title>'
+                       f'<path d="{_bar_path(label_w, yb, max(0.0, X(m["ah"]) - label_w), bar_h, 3)}" fill="{NAVY}" '
+                       f'fill-opacity="0.5"/></g>')
+            txt = (f'<tspan class="num">{m["ah"]:.2f} Ah</tspan><tspan class="muted"> with no brownout · lowest '
+                   f'{mv:.2f} V ({mv - 6.75:.2f} V to spare)</tspan>')
+        out.append(f'<text x="{label_w + plot_w + 12}" y="{y + row_h / 2 + 5}" class="val" '
+                   f'opacity="{max(op, 0.6)}">{txt}</text>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+def _nice_ah_ticks(vmax: float) -> List[float]:
+    step = 1.0 if vmax <= 8 else 2.0
+    return [i * step for i in range(int(vmax // step) + 1)]
+
+
+def battery_card_html(ev: Dict[str, Any], links: Dict[str, str]) -> str:
+    if not ev["matches"]:
+        return ""
+    B = ev["brownout"]
+    bits = []
+    if B.get("median_ah_before_first") is not None:
+        bits.append(f'In the counted matches the battery first browned out after a median of '
+                    f'<b>{B["median_ah_before_first"]:.2f} Ah</b> (as early as {B["min_ah_before_first"]:.2f} Ah); '
+                    f'the robot then used a median of {B["median_ah_after_first"]:.2f} Ah more.')
+    if B.get("max_ah_no_brownout") is not None:
+        bits.append(f'Matches with no brownout used up to {B["max_ah_no_brownout"]:.2f} Ah.')
+    summary = " ".join(bits)
+    return (f'<section class="card"><h2>Charge before the first brownout</h2>'
+            f'<p class="lead">How much charge each match used before the battery first dropped below 6.75 V, and how much '
+            f'it kept using after. A battery holds far more charge than this: what runs out first is its ability to hold '
+            f'its voltage up under peak current. These figures are measured, not projected. Pitwall doesn\'t estimate the '
+            f'charge left, because a battery\'s voltage collapses too suddenly near the end to project from earlier '
+            f'in a match.</p><p>{summary}</p>'
+            f'<div class="legend"><span class="key"><i style="background:{NAVY}"></i>Used before the first brownout</span>'
+            f'<span class="key"><i style="background:{RED}"></i>Used after it</span>'
+            f'<span class="key"><i style="background:{NAVY};opacity:.5"></i>No brownout</span></div>'
+            f'{battery_svg(ev, links)}</section>')
+
+
 # ---------------------------------------------------------------- donut: where the charge goes
 
 def _arc(cx: float, cy: float, r_out: float, r_in: float, a0: float, a1: float) -> str:
@@ -580,6 +674,11 @@ def render_event(ev: Dict[str, Any], series_by_label: Dict[str, Dict[str, Any]],
         cb, pb = C["brownout"]["cur"], C["brownout"]["prev"]
         crow.append(f'<tr><td>Matches with a brownout</td><td class="r num">{cb["with_brownout"]} of {cb["matches"]}</td>'
                     f'<td class="r num">{pb["with_brownout"]} of {pb["matches"]}</td><td></td></tr>')
+        ab = C["brownout"].get("ah_before")
+        if ab:
+            crow.append(f'<tr><td>{esc(ab["label"])}</td><td class="r num">{fmt(ab["cur"], 2, "Ah")}</td>'
+                        f'<td class="r num">{fmt(ab["prev"], 2, "Ah")}</td>'
+                        f'<td class="r num">{fmt_delta(ab["delta"], 2, "Ah")}</td></tr>')
         fl = C["brownout"]["first_left"]
         crow.append(f'<tr><td>{esc(fl["label"])}</td><td class="r num">{fmt(fl["cur"], 1, "s")}</td>'
                     f'<td class="r num">{fmt(fl["prev"], 1, "s")}</td>'
@@ -640,7 +739,7 @@ For time left at first brownout, a bigger number means the battery gave out earl
         date=esc(date), profile=esc(ev["profile"]), builds=esc(", ".join(ev["builds"]) or "unknown"),
         n_matches=len(ev["matches"]), n=n, stats=stat_html, legend=legend,
         charge_chart=charge_by_match_svg(ev, links), charge_split=charge_split_html(ev),
-        brownout_chart=brownout_svg(ev, series_by_label, links),
+        brownout_chart=brownout_svg(ev, series_by_label, links), battery_card=battery_card_html(ev, links),
         match_rows="".join(mrows), shoot_head=esc(shoot or "—"),
         s_head=s_head, sub_rows="".join(srows), compare=compare_html,
         phase_card=phase_card, shift_card=shift_card, observations=obs,
@@ -689,6 +788,8 @@ PAGE = """<!doctype html>
 <p class="lead">Battery voltage through each match, lined up by match time left. Red marks are brownouts (below 6.75 V the roboRIO cuts motor output); the dot is the first. {shade_note}</p>
 {brownout_chart}
 </section>
+
+{battery_card}
 
 {shift_card}
 

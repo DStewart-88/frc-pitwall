@@ -20,7 +20,7 @@ import tempfile
 from typing import Any, Dict, Optional
 
 # Bump when match or power analysis output changes, so old cache entries are ignored.
-ANALYSIS_VERSION = 3
+ANALYSIS_VERSION = 4
 
 
 def default_dir() -> str:

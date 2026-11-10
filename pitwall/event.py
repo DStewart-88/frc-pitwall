@@ -60,6 +60,8 @@ def match_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
         "brownout": {"episodes": B["episodes"], "onsets": B["onsets"],
                      "first_time_left_s": B["first_time_left_s"],
                      "first_period": B.get("first_period"),
+                     "ah_before_first": B.get("ah_before_first"), "ah_after_first": B.get("ah_after_first"),
+                     "margin_v": B.get("margin_v"),
                      "episode_time_left": B["episode_time_left"],
                      "seconds_below_threshold": B["seconds_below_threshold"]},
         "subsystems": {s["id"]: {"ah": s["ah"], "wh": s["wh"], "mean_a": s["mean_a"],
@@ -233,7 +235,17 @@ def brownout_summary(ms: List[Dict[str, Any]]) -> Dict[str, Any]:
         fp = m["brownout"].get("first_period") if m["brownout"]["episodes"] else None
         if fp:
             by_period[fp] = by_period.get(fp, 0) + 1
+    before = [m["brownout"].get("ah_before_first") for m in ms if m["brownout"]["episodes"]]
+    before = [x for x in before if x is not None]
+    after = [m["brownout"].get("ah_after_first") for m in ms if m["brownout"]["episodes"]]
+    after = [x for x in after if x is not None]
+    clean = [m for m in ms if not m["brownout"]["episodes"]]
     return {
+        "median_ah_before_first": statistics.median(before) if before else None,
+        "min_ah_before_first": min(before) if before else None,
+        "median_ah_after_first": statistics.median(after) if after else None,
+        "max_ah_no_brownout": max((m["ah"] for m in clean), default=None),
+        "min_margin_v_no_brownout": (min(m["min_v"] for m in clean) - 6.75) if clean else None,
         "first_by_period": by_period,
         "matches": len(ms),
         "with_brownout": len(firsts),
@@ -307,6 +319,8 @@ def compare(cur: Dict[str, Any], prev: Dict[str, Any]) -> Dict[str, Any]:
         "cur": CB, "prev": PB,
         "first_left": _row("Time left at first brownout (median)", "s", 1,
                            CB["median_first_left_s"], PB["median_first_left_s"], "brownout.median"),
+        "ah_before": _row("Charge used before the first brownout (median)", "Ah", 2,
+                          CB.get("median_ah_before_first"), PB.get("median_ah_before_first"), "brownout.ah_before"),
     }
     prev_names = {s["id"]: s["name"] for s in prev.get("subsystem_info", [])}
     sub_rows = []

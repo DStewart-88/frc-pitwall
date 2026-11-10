@@ -289,8 +289,12 @@ def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str) -> 
         left = B["first_time_left_s"]
         bo_main = f"{left:.1f} s" if left is not None else f'{B["first_t"]:.0f} s in'
         bo_sub = f'left at first brownout · {B["episodes"]} episode{"s" if B["episodes"] != 1 else ""}'
+        if B.get("ah_before_first") is not None:
+            bo_sub = (f'left; it came after {B["ah_before_first"]:.2f} Ah, '
+                      f'then {B["ah_after_first"]:.2f} Ah more was used')
     else:
-        bo_main, bo_sub = "None", "no brownout this match"
+        bo_main = "None"
+        bo_sub = f"no brownout in {T['ah']:.2f} Ah · lowest {T['min_v']:.2f} V"
 
     stats = [
         (f'{T["ah"]:.2f} Ah', "Charge used", f'{T["wh"]:.1f} Wh'),
