@@ -74,9 +74,9 @@ class EventTest(unittest.TestCase):
         self.assertIn("Compared with First Event", html)
         self.assertIn("Where the charge goes", html)
         self.assertIn("Charge before the first brownout", html)
-        self.assertEqual(html.count('class="donut"'), 1)                 # one donut: this event outside,
+        self.assertEqual(html.count('class="donut"'), 2)                 # Overview and Power tabs; each: this event outside,
         self.assertIn('data-which="prev"', html)                          # the previous event as the inner ring
-        self.assertIn('href="matches/akit_26-02-01_11-00-00_bbb_q1.html"', html)
+        self.assertIn('href="matches/akit_26-02-01_11-00-00_bbb_q1.html#power"', html)
         self.assertTrue(os.path.exists(os.path.join(self.out, "BBB", "matches", "akit_26-02-01_11-00-00_bbb_q1.html")))
 
     def test_names_from_folders(self):

@@ -212,7 +212,9 @@ def match_section(sc: Optional[Dict[str, Any]], series: Dict[str, Any], head: bo
 
 # ---------------------------------------------------------------- event page
 
-def shots_by_match_svg(ev: Dict[str, Any], links: Dict[str, str]) -> str:
+def shots_by_match_svg(ev: Dict[str, Any], links: Dict[str, str], compact: bool = False,
+                       link_suffix: str = "#scoring") -> str:
+    """Shots in each match, stacked by target. compact=True draws it for a half-width card (Overview)."""
     S = ev["scoring"]
     A = S["averages"]
     rows = [m for m in ev["matches"] if m.get("scoring")]
@@ -226,8 +228,10 @@ def shots_by_match_svg(ev: Dict[str, Any], links: Dict[str, str]) -> str:
                          {"total": prev_tot}))
     tot = [sum(m["scoring"][c] for c in CATS) for m in rows]
     vmax = max(tot + [sum(r[2].get(c, 0) for c in CATS) or r[2].get("total", 0) for r in avg_rows] + [1])
-    label_w, val_w, row_h, bar_h, top, gap = 150, 300, 30, 18, 6, 18
-    width = 1100
+    if compact:
+        label_w, val_w, row_h, bar_h, top, gap, width = 70, 150, 32, 20, 6, 16, 560
+    else:
+        label_w, val_w, row_h, bar_h, top, gap, width = 150, 300, 30, 18, 6, 18, 1100
     plot_w = width - label_w - val_w - 16
     scale = plot_w / vmax
     height = top + len(rows) * row_h + (gap + len(avg_rows) * row_h if avg_rows else 0) + 8
@@ -239,11 +243,11 @@ def shots_by_match_svg(ev: Dict[str, Any], links: Dict[str, str]) -> str:
         parts = [(s[c], CAT_COLOR[c], f'{m["label"]} {CAT_NAME[c].lower()}: {s[c]} shots') for c in CATS]
         href = links.get(m["label"])
         lab = esc(m["label"])
-        out.append(f'<a href="{esc(href)}#scoring"><text x="{label_w - 12}" y="{y + row_h / 2 + 5}" text-anchor="end" '
+        out.append(f'<a href="{esc(href)}{link_suffix}"><text x="{label_w - 12}" y="{y + row_h / 2 + 5}" text-anchor="end" '
                    f'class="lbl link">{lab}</text></a>' if href else
                    f'<text x="{label_w - 12}" y="{y + row_h / 2 + 5}" text-anchor="end" class="lbl">{lab}</text>')
         out.append(_stack(label_w, y + (row_h - bar_h) / 2, bar_h, parts, scale, op))
-        note = "" if m["counted"] else '<tspan class="muted"> · not counted</tspan>'
+        note = "" if (m["counted"] or compact) else '<tspan class="muted"> · not counted</tspan>'
         out.append(f'<text x="{label_w + plot_w + 12}" y="{y + row_h / 2 + 5}" class="val"><tspan class="num">'
                    f'{s["hub"]} hub</tspan><tspan class="muted"> · {s["shuttle"]} shuttle</tspan>{note}</text>')
         y += row_h
@@ -256,15 +260,15 @@ def shots_by_match_svg(ev: Dict[str, Any], links: Dict[str, str]) -> str:
                 bar = _stack(label_w, y + (row_h - bar_h) / 2, bar_h, parts, scale)
                 txt = (f'<tspan class="num">{vals["hub"]:.0f} hub</tspan><tspan class="muted"> · '
                        f'{vals["shuttle_mid"] + vals["shuttle_full"]:.0f} shuttle</tspan>')
-                name = "Event average"
+                name = "Average" if compact else "Event average"
             else:
                 ph, ps = PC["averages"].get("hub") or 0.0, PC["averages"].get("shuttle") or 0.0
                 bar = _stack(label_w, y + (row_h - bar_h) / 2, bar_h,
                              [(ph, PREV_GREY, f'{label}: {ph:.0f} hub shots'),
                               (ps, PREV_GREY_LIGHT, f'{label}: {ps:.0f} shuttle shots')], scale)
-                txt = (f'<tspan class="num">{ph:.0f} hub</tspan><tspan class="muted"> · {ps:.0f} shuttle · '
-                       f'{esc(label)}</tspan>')
-                name = "Previous event"
+                txt = (f'<tspan class="num">{ph:.0f} hub</tspan><tspan class="muted"> · {ps:.0f} shuttle'
+                       + ("" if compact else f' · {esc(label)}') + '</tspan>')
+                name = "Previous" if compact else "Previous event"
             out.append(f'<text x="{label_w - 12}" y="{y + row_h / 2 + 5}" text-anchor="end" class="lbl">{name}</text>'
                        f'{bar}<text x="{label_w + plot_w + 12}" y="{y + row_h / 2 + 5}" class="val">{txt}</text>')
             y += row_h

@@ -427,7 +427,9 @@ def donut_svg(cur: List[Dict[str, Any]], cur_total: float, cur_label: str,
     return "".join(out)
 
 
-def charge_split_html(ev: Dict[str, Any]) -> str:
+def charge_split_html(ev: Dict[str, Any], compact: bool = False) -> str:
+    """'Where the charge goes': the donut and a table. compact=True (the Overview tab) shows the donut
+    with a short key in place of the table."""
     A, C = ev["averages"], ev.get("compare")
     if not A.get("n"):
         return ""
@@ -467,7 +469,26 @@ def charge_split_html(ev: Dict[str, Any]) -> str:
             cells += (f'<td class="r num">{fmt(pv, 2)}</td><td class="r num">{pss}</td>'
                       f'<td class="r num">{fmt_delta(d, 2)} <span class="muted">{fmt_pct(d / pv if d is not None and pv else None)}</span></td>')
             data += (f' data-prev-name="{esc(C["name"])}" data-prev-ah="{fmt(pv, 2)}" data-prev-pct="{pss}"')
-        rows.append(f'<tr {data}>{cells}</tr>')
+        rows.append(f'<tr data-row {data}>{cells}</tr>')
+    if compact:
+        keys = []
+        for p in cur:
+            share = max(0.0, p["ah"]) / cur_total if cur_total else 0.0
+            pv = prev_by.get(p["id"]) if C else None
+            ps = (max(0.0, pv) / prev_total) if (pv is not None and prev_total) else None
+            data = (f'data-sub="{esc(p["id"])}" data-name="{esc(p["name"])}" data-cur-name="{esc(ev["name"])}" '
+                    f'data-cur-ah="{p["ah"]:.2f}" data-cur-pct="{share:.0%}"')
+            if C:
+                data += (f' data-prev-name="{esc(C["name"])}" data-prev-ah="{fmt(pv, 2)}" '
+                         f'data-prev-pct="{"—" if ps is None else f"{ps:.0%}"}"')
+            keys.append(f'<li data-row {data}><i class="sw" style="background:{color_for(p["color"])}"></i>'
+                        f'<span>{esc(p["name"])}</span><b>{share:.0%}</b></li>')
+        ring_note = f", with {esc(C['name'])} as the faded inner ring" if C else ""
+        return (f'<section class="card"><div class="row"><h2>Where the charge goes</h2>'
+                f'<a class="more" href="#power">Power details →</a></div>'
+                f'<p class="lead">An average match{ring_note}. Hover a slice for its figures.</p>'
+                f'<div class="split compact"><div class="dns">{donuts}</div><ul class="dn-keylist">{"".join(keys)}</ul></div>'
+                f'</section>')
     lead = ("Each group's share of the charge an average match used"
             + (f". The faded inner ring is {esc(C['name'])}, with the groups in the same order and place." if C else ".")
             + " Hover a slice or a row for its figures.")
@@ -479,6 +500,11 @@ def charge_split_html(ev: Dict[str, Any]) -> str:
 
 DONUT_CSS = """
 .split{display:grid;grid-template-columns:300px minmax(0,1fr);gap:24px 40px;align-items:center}
+.split.compact{grid-template-columns:280px minmax(0,1fr);gap:16px 28px}
+ul.dn-keylist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;font-size:15px}
+ul.dn-keylist li{display:flex;align-items:center;gap:4px;padding:2px 6px;border-radius:4px}
+ul.dn-keylist li span{flex:1} ul.dn-keylist li.on{background:#f1f3f8}
+a.more{font-size:13px;color:#0b4fa8;text-decoration:none} a.more:hover{text-decoration:underline}
 @media (max-width:820px){.split{grid-template-columns:1fr}}
 .dns{display:flex;justify-content:center}
 figure.dn{margin:0;text-align:center}
@@ -495,16 +521,15 @@ table.dn-table tr{cursor:default} table.dn-table tr.on td{background:#f1f3f8}
 """
 
 DONUT_JS = """
-(function(){
-  var tip=document.getElementById('tip'),box=document.querySelector('.split');
-  if(!box)return;
+document.querySelectorAll('.split').forEach(function(box){
+  var tip=document.getElementById('tip');
   function hl(sub){box.classList.toggle('hl',!!sub);
     box.querySelectorAll('.seg').forEach(function(s){s.classList.toggle('on',s.dataset.sub===sub);});
-    box.querySelectorAll('tr[data-sub]').forEach(function(r){r.classList.toggle('on',r.dataset.sub===sub);});}
+    box.querySelectorAll('[data-row]').forEach(function(r){r.classList.toggle('on',r.dataset.sub===sub);});}
   function show(ev,html){tip.innerHTML=html;tip.style.display='block';
     var x=ev.clientX+14,y=ev.clientY+12;if(x+tip.offsetWidth>innerWidth-8)x=ev.clientX-tip.offsetWidth-14;
     if(y+tip.offsetHeight>innerHeight-8)y=innerHeight-tip.offsetHeight-8;tip.style.left=x+'px';tip.style.top=y+'px';}
-  function info(sub){var r=box.querySelector('tr[data-sub="'+sub+'"]'),d=r.dataset,out='';
+  function info(sub){var r=box.querySelector('[data-row][data-sub="'+sub+'"]'),d=r.dataset,out='';
     out+='<div style="margin-bottom:4px"><b>'+d.name+'</b> <span style="color:#5a6479">per match</span></div>';
     out+='<div class="r"><span>'+d.curName+'</span><b>'+d.curAh+' Ah · '+d.curPct+'</b></div>';
     if(d.prevName)out+='<div class="r"><span>'+d.prevName+'</span><span>'+d.prevAh+' Ah · '+d.prevPct+'</span></div>';
@@ -512,10 +537,10 @@ DONUT_JS = """
   box.querySelectorAll('.seg').forEach(function(s){
     s.addEventListener('mousemove',function(e){hl(s.dataset.sub);show(e,info(s.dataset.sub));});
     s.addEventListener('mouseleave',function(){hl(null);tip.style.display='none';});});
-  box.querySelectorAll('tr[data-sub]').forEach(function(r){
+  box.querySelectorAll('[data-row]').forEach(function(r){
     r.addEventListener('mouseenter',function(){hl(r.dataset.sub);});
     r.addEventListener('mouseleave',function(){hl(null);});});
-})();
+});
 """
 
 
@@ -581,34 +606,26 @@ def overview_html(ev: Dict[str, Any], links: Dict[str, str], power_stats: List[t
                                                 by_label["Time left at first brownout"]])]
     if has_sc and (ev.get("scoring") or {}).get("averages", {}).get("n"):
         cards.append(module_card("Scoring", "scoring", "", scoring_tiles(ev)))
-    rows = []
-    for m in ev["matches"]:
-        href = links.get(m["label"])
-        lab = f'<a href="{esc(href)}">{esc(m["label"])}</a>' if href else esc(m["label"])
-        Bm, sc = m["brownout"], m.get("scoring")
-        first = fmt(Bm["first_time_left_s"], 1) if Bm["episodes"] else "—"
-        if Bm["episodes"] and Bm.get("first_period"):
-            first += f' <span class="muted small">{esc(Bm["first_period"])}</span>'
-        status = ("Counted" + (" (by hand)" if m.get("included_by_hand") else "")) if m["counted"] \
-            else f'<span class="muted">{esc(m["why_not"])}</span>'
-        cells = (f'<td>{lab}</td><td class="r num">{m["ah"]:.2f}</td><td class="r num">{Bm["episodes"]}</td>'
-                 f'<td class="r num">{first}</td>')
-        if has_sc:
-            cells += (f'<td class="r num">{sc["hub"] if sc else "—"}</td><td class="r num">{sc["shuttle"] if sc else "—"}</td>'
-                      f'<td class="r num">{fmt(sc["bps_flow_hub"], 2) if sc else "—"}</td>')
-        rows.append(f'<tr class="{"" if m["counted"] else "dim"}">{cells}<td>{status}</td></tr>')
-    head = ('<th>Match</th><th class="r">Ah</th><th class="r">Brownouts</th><th class="r">First brownout<br>s left</th>'
-            + ('<th class="r">Hub shots</th><th class="r">Shuttle shots</th><th class="r">Hub BPS<br>flowing</th>'
-               if has_sc else "") + '<th>Averages</th>')
+    # Charts, not tables: where the charge goes, and shots in each match. Match names link to the match.
+    from .scoring_html import legend_html, shots_by_match_svg
+    charts = [charge_split_html(ev, compact=True)]
+    if has_sc and (ev.get("scoring") or {}).get("averages", {}).get("n"):
+        PC = ev["scoring"].get("compare")
+        key = legend_html()
+        if PC and ev.get("compare"):
+            key += f'<span class="key"><i style="background:{PREV_GREY}"></i>{esc(ev["compare"]["name"])}</span>'
+        charts.append(f'<section class="card"><div class="row"><h2>Shots by match</h2>'
+                      f'<a class="more" href="#scoring">Scoring details →</a></div>'
+                      f'<p class="lead">What the robot aimed at, match by match. Click a match for its report.</p>'
+                      f'<div class="legend">{key}</div>{shots_by_match_svg(ev, links, compact=True, link_suffix="")}'
+                      f'</section>')
     groups = [("Power", ev["observations"])]
     if has_sc:
         groups.append(("Scoring", (ev.get("scoring") or {}).get("observations", [])))
     obs = combined_observations(groups)
     n, total = ev["averages"].get("n", 0), len(ev["matches"])
     return (f'<div class="modcards">{"".join(cards)}</div>'
-            f'<section class="card"><h2>Matches</h2><p class="lead">Click a match for its report; it opens on the '
-            f'same tabs as this page.</p><div class="scroll"><table><thead><tr>{head}</tr></thead>'
-            f'<tbody>{"".join(rows)}</tbody></table></div></section>'
+            f'<div class="modcards">{"".join(charts)}</div>'
             f'<section class="card"><h2>Things to check</h2><ul class="obs">'
             f'{obs or "<li class=muted>Nothing to act on or watch. Each tab lists its own notes too.</li>"}</ul></section>'
             f'{other}'
