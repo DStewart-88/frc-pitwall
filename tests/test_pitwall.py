@@ -50,7 +50,7 @@ AUTO0, AUTO1, TELE0, TELE1 = 10.0, 30.0, 33.0, 173.0
 
 
 def make_log(path, brownout_at=None, m1_connected=True, extra_key=False, event="TEST", match_type=2,
-             number=12, m1_amps=10.0, tele_end=TELE1, station=None, game_data=None):
+             number=12, m1_amps=10.0, tele_end=TELE1, station=None, game_data=None, extra=None):
     w = LogWriter(path)
     w.put("/DriverStation/EventName", 0.0, event)
     w.put("/DriverStation/MatchType", 0.0, match_type)
@@ -92,6 +92,8 @@ def make_log(path, brownout_at=None, m1_connected=True, extra_key=False, event="
     if brownout_at is not None:
         w.put("/SystemStats/BrownedOut", brownout_at, True)
         w.put("/SystemStats/BrownedOut", brownout_at + 0.1, False)
+    if extra is not None:
+        extra(w)
     w.close()
 
 

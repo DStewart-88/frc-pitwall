@@ -103,9 +103,11 @@ def cmd_event(a) -> int:
         index = write_event(ev, g, folder)
         A, B = ev["averages"], ev["brownout"]
         cmp_txt = f"  vs {ev['compare']['name']}" if ev.get("compare") else ""
+        SA = (ev.get("scoring") or {}).get("averages") or {}
+        shots = f", {SA['hub']:.0f} hub shots per match" if SA.get("n") else ""
         print(f"{ev['name']} ({ev['code']}): {len(ev['matches'])} matches, {A.get('n', 0)} counted, "
               f"{A.get('ah', 0) or 0:.2f} Ah per match, brownouts in {B['with_brownout']} of {B['matches']}"
-              f"{cmp_txt}\n  -> {index}")
+              f"{shots}{cmp_txt}\n  -> {index}")
     return 0
 
 

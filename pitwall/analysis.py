@@ -2,7 +2,7 @@
 
 `analyze_logs` is what the command line (and later the app) calls. Each log comes back as
 one of:
-  {"ok": payload}     payload = identity, flags, power result, source file info
+  {"ok": payload}     payload = identity, flags, one result per module (power, scoring, ...), source file info
   {"skip": reason}    a log Pitwall can't report on (never enabled, no motor current, ...)
   {"error": message}  a broken or unreadable log
 """
@@ -14,9 +14,10 @@ import re
 from concurrent.futures import ProcessPoolExecutor
 from typing import Any, Callable, Dict, List, Optional
 
-from . import __version__, power
+from . import __version__
 from .cache import Cache, cache_key, file_sha256
 from .match import SkipLog, build_match
+from .modules import MODULES
 from .profile import ProfileError, load_profile
 from .wpilog import WPILog, WPILogError
 
@@ -61,9 +62,12 @@ def _analyze_one(path: str, profile_path: str, current_mode: Optional[str],
     try:
         log = WPILog(path)
         m = build_match(log, profile)
-        result = power.analyze(m)
-        entry = {"ok": {"pitwall": __version__, "profile": profile.name, "identity": identity_dict(m),
-                        "flags": m.flags, "silent": m.silent, "power": result, "source": source}}
+        ok = {"pitwall": __version__, "profile": profile.name, "identity": identity_dict(m),
+              "flags": m.flags, "silent": m.silent, "source": source}
+        for mod in MODULES:
+            if mod.applies(profile):
+                ok[mod.name] = mod.analyze(m)
+        entry = {"ok": ok}
     except SkipLog as e:
         entry = {"skip": str(e), "source": source}
     except (WPILogError, ValueError, KeyError, IndexError) as e:

@@ -252,3 +252,26 @@ class ScanTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScoringDraftTest(unittest.TestCase):
+    def test_picks_keys_from_log(self):
+        from pitwall.setup.draft import scoring_draft
+        keys = {"/RealOutputs/Shooter/Velocity": "double", "/RealOutputs/Shooter/MainSupplyCurrent": "double",
+                "/RealOutputs/Trajectory/ShooterSpeed": "double", "/RealOutputs/Shooter/MainVoltage": "double",
+                "/RealOutputs/RobotContainer/OnTargetRobot": "boolean", "/RealOutputs/Turret/OnTarget": "boolean",
+                "/RealOutputs/TrajectorySolver/IsTargetingHub": "boolean", "/RealOutputs/Turret/IsTargeting": "boolean"}
+        motors = [{"name": "Shooter main", "subsystem": "Shooter", "keys": {"velocity": "/RealOutputs/Shooter/Velocity"}}]
+        d = scoring_draft(keys, motors, "/RealOutputs/RobotContainer/IsShooting")
+        self.assertEqual(d["velocity"], "/RealOutputs/Shooter/Velocity")
+        self.assertEqual(d["setpoint"], "/RealOutputs/Trajectory/ShooterSpeed")
+        self.assertEqual(d["feeding"], "/RealOutputs/RobotContainer/OnTargetRobot")
+        self.assertEqual(d["targeting_hub"], "/RealOutputs/TrajectorySolver/IsTargetingHub")
+        self.assertTrue(d["include"])
+        self.assertFalse(scoring_draft(keys, motors, "")["include"])     # no shooting signal, no shot counting
+        toml = draft_to_toml({"motors": [{"name": "Shooter main", "subsystem": "Shooter",
+                                          "keys": {"supply": "/RealOutputs/Shooter/MainSupplyCurrent"}}],
+                              "subsystems": [], "shooting_key": "/RealOutputs/RobotContainer/IsShooting",
+                              "scoring": d})
+        self.assertIn("[scoring]", toml)
+        self.assertIn('targeting_hub = "/RealOutputs/TrajectorySolver/IsTargetingHub"', toml)

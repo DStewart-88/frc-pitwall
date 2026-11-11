@@ -574,7 +574,8 @@ def shift_card_html(ev: Dict[str, Any], shoot: Optional[str]) -> str:
 # ---------------------------------------------------------------- page
 
 def render_event(ev: Dict[str, Any], series_by_label: Dict[str, Dict[str, Any]],
-                 links: Dict[str, str]) -> str:
+                 links: Dict[str, str], shots_by_label: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> str:
+    from .scoring_html import SECTION_CSS, event_section
     A, B, C = ev["averages"], ev["brownout"], ev.get("compare")
     n = A.get("n", 0)
     prev_rows = {r["key"]: r for r in C["rows"]} if C else {}
@@ -734,8 +735,11 @@ For time left at first brownout, a bigger number means the battery gave out earl
     if last and last != date:
         date = f"{date} – {last}"
 
+    scoring_html = event_section(ev, shots_by_label or {}, links)
+    nav = ('<nav class="jump" aria-label="Sections"><a href="#power">Power</a><a href="#scoring">Scoring</a></nav>'
+           if scoring_html else "")
     return PAGE.format(
-        css=base_css(), extra_css=EXTRA_CSS, donut_css=DONUT_CSS, donut_js=DONUT_JS, title=esc(ev["name"]), code=esc(ev["code"]),
+        css=base_css() + SECTION_CSS, extra_css=EXTRA_CSS, nav=nav, scoring=scoring_html, donut_css=DONUT_CSS, donut_js=DONUT_JS, title=esc(ev["name"]), code=esc(ev["code"]),
         date=esc(date), profile=esc(ev["profile"]), builds=esc(", ".join(ev["builds"]) or "unknown"),
         n_matches=len(ev["matches"]), n=n, stats=stat_html, legend=legend,
         charge_chart=charge_by_match_svg(ev, links), charge_split=charge_split_html(ev),
@@ -774,7 +778,8 @@ PAGE = """<!doctype html>
 <span class="meta">{n_matches} matches · builds {builds} · profile {profile}</span></div></header>
 <main>
 <div><p class="eyebrow">{code} · {date}</p><h1>{title}</h1></div>
-<section class="stats">{stats}</section>
+{nav}
+<section class="stats" id="power">{stats}</section>
 
 {charge_split}
 
@@ -807,10 +812,12 @@ PAGE = """<!doctype html>
 {phase_card}
 
 <section class="card"><h2>Observations</h2><ul class="obs">{observations}</ul></section>
-{other}
-<footer>Averages are per counted match ({n} of {n_matches}). A match isn't counted if it's a practice match, the robot was enabled for under 90% of it,
+<p class="muted small">Power averages are per counted match ({n} of {n_matches}). A match isn't counted if it's a practice match, the robot was enabled for under 90% of it,
 a motor was missing from the CAN bus, or it drew under half the event's typical charge; Pitwall shows it anyway.
-{mode_note} The control system (roboRIO, radio, cameras, CANivore, Pigeon) isn't logged, so totals are slightly low.</footer>
+{mode_note} The control system (roboRIO, radio, cameras, CANivore, Pigeon) isn't logged, so totals are slightly low.</p>
+{scoring}
+{other}
+<footer>Made by Pitwall.</footer>
 </main>
 <div class="tip" id="tip"></div>
 <script>{donut_js}</script>

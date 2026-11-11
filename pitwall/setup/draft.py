@@ -48,6 +48,46 @@ def _tokens(s: str) -> Set[str]:
     return {w for w in words if w not in stop}
 
 
+def _pick(cands: List[str], prefer: str) -> str:
+    """The candidate whose name matches `prefer` (a regex), else the shortest one, else ''."""
+    good = [k for k in cands if re.search(prefer, k, re.I)]
+    pool = good or cands
+    return sorted(pool, key=lambda k: (0 if "RobotContainer" in k or "RealOutputs" in k else 1, len(k)))[0] if pool else ""
+
+
+def _uniq(xs: List[str]) -> List[str]:
+    out: List[str] = []
+    for x in xs:
+        if x and x not in out:
+            out.append(x)
+    return out
+
+
+def scoring_draft(log_keys: Dict[str, str], motors: List[Dict[str, Any]], shooting_key: str) -> Dict[str, Any]:
+    """Keys for shot counting: flywheel speed and setpoint, the feeder gate, and 'aiming at our goal'.
+
+    Picked from the sample log by name; the user checks them on the setup page."""
+    nums = sorted(k for k, t in log_keys.items() if t in ("double", "float", "int64")
+                  and not k.startswith("/ReplayOutputs"))
+    bools = sorted(k for k, t in log_keys.items() if t == "boolean" and not k.startswith("/ReplayOutputs"))
+    shooterish = r"shoot|flywheel"
+    velocity = _uniq([m["keys"]["velocity"] for m in motors if m["keys"].get("velocity")
+                      and re.search(shooterish, m["subsystem"] + " " + m["name"], re.I)]
+                     + [k for k in nums if re.search(shooterish, k, re.I) and re.search(r"velocity", k, re.I)])
+    if log_keys:
+        velocity = [k for k in velocity if k in log_keys]
+    setpoint = [k for k in nums if re.search(shooterish, k, re.I)
+                and re.search(r"speed|setpoint|target|goal", k, re.I)
+                and not re.search(r"current|volt|velocity|position|temp", k, re.I)]
+    feeding = [k for k in bools if re.search(r"on_?target|feed|gate|index", k, re.I)]
+    hub = [k for k in bools if re.search(r"targeting|hub|speaker|goal", k, re.I)]
+    d = {"velocity": _pick(velocity, r"main|velocity$"), "setpoint": _pick(setpoint, r"shooterspeed|setpoint"),
+         "feeding": _pick(feeding, r"ontargetrobot"), "targeting_hub": _pick(hub, r"istargetinghub"),
+         "choices": {"velocity": velocity, "setpoint": setpoint, "feeding": feeding, "targeting_hub": hub}}
+    d["include"] = bool(d["velocity"] and d["setpoint"] and shooting_key)
+    return d
+
+
 def make_draft(scan: ScanResult, log: Optional[WPILog] = None, robot_name: str = "") -> Dict[str, Any]:
     log_keys: Dict[str, str] = dict(log.entries()) if log else {}
     has = (lambda k: k in log_keys) if log else (lambda k: True)
@@ -123,12 +163,14 @@ def make_draft(scan: ScanResult, log: Optional[WPILog] = None, robot_name: str =
     drive_vel = [m["keys"]["velocity"] for m in motors if m["subsystem"] == "Drive" and m["keys"].get("velocity")
                  and has(m["keys"]["velocity"])]
     game = DEFAULT_GAME if (not log or "/DriverStation/GameSpecificMessage" in log_keys) else "quarters"
+    shooting_key = shoot[0] if shoot else ""
     return {
         "robot_name": robot_name or "Robot",
         "code_root": scan.root, "log_file": log.path if log else None,
         "motors": motors, "unclaimed": unclaimed, "supply_keys": supply_in_log,
         "subsystems": subsystems,
-        "shooting_key": shoot[0] if shoot else "", "shooting_choices": shoot or [k for k in bools if "shoot" in k.lower()],
+        "scoring": scoring_draft(log_keys, motors, shooting_key),
+        "shooting_key": shooting_key, "shooting_choices": shoot or [k for k in bools if "shoot" in k.lower()],
         "driving_keys": drive_vel,
         "game": game, "games": {k: v["label"] for k, v in GAMES.items()},
         "notes": scan.notes,
@@ -215,4 +257,13 @@ def draft_to_toml(d: Dict[str, Any]) -> str:
                 out.append(f"{f} = {_q(m['keys'][f])}")
         out.append("")
     out += ["[[unmeasured]]", 'name = "Control system (roboRIO, radio, cameras, CAN hubs)"', ""]
+    sc = d.get("scoring") or {}
+    if sc.get("include") and sc.get("velocity") and sc.get("setpoint") and d.get("shooting_key"):
+        out += ["# Shot counting from flywheel speed dips (the Scoring section of the reports).",
+                "[scoring]", f"velocity = {_q(sc['velocity'])}", f"setpoint = {_q(sc['setpoint'])}",
+                f"shooting = {_q(d['shooting_key'])}"]
+        for f in ("feeding", "targeting_hub"):
+            if sc.get(f):
+                out.append(f"{f} = {_q(sc[f])}")
+        out.append("")
     return "\n".join(out)

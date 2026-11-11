@@ -194,7 +194,8 @@ def _event_card(ev: Dict[str, Any]) -> Dict[str, Any]:
     return {"code": ev.get("code"), "first_stamp": ev.get("first_stamp"), "matches": len(ev.get("matches", [])),
             "counted": A.get("n", 0), "ah": A.get("ah"), "mean_a": A.get("mean_a"),
             "with_brownout": B.get("with_brownout"), "brownout_matches": B.get("matches"),
-            "median_first_left_s": B.get("median_first_left_s")}
+            "median_first_left_s": B.get("median_first_left_s"),
+            "hub_shots": ((ev.get("scoring") or {}).get("averages") or {}).get("hub")}
 
 
 def new_token() -> str:

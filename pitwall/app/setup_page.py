@@ -59,6 +59,19 @@ idle otherwise; Pitwall then reports any current they draw at other times as idl
 <label class="f" for="shoot">"Shooting" signal</label><select id="shoot"></select>
 <p class="hint">A true/false log key that's on while the robot shoots. Reports split each group's charge by shooting, driving and still.</p>
 </section>
+<section class="card"><h2>Shot counting</h2>
+<p class="lead">Pitwall counts shots from dips in the flywheel speed while the "Shooting" signal is on. Check the keys it picked.</p>
+<label class="toggle"><input type="checkbox" id="sc_inc"> Count shots (adds a Scoring section to the reports)</label>
+<div id="sc_fields">
+<label class="f" for="sc_velocity">Flywheel speed</label><select id="sc_velocity"></select>
+<label class="f" for="sc_setpoint">Flywheel speed setpoint</label><select id="sc_setpoint"></select>
+<p class="hint">The speed the flywheel is told to run at, in the same units as its speed.</p>
+<label class="f" for="sc_feeding">Feeder gate open (optional)</label><select id="sc_feeding"></select>
+<p class="hint">On while balls are being fed. Without it, shots are counted whenever "Shooting" is on.</p>
+<label class="f" for="sc_targeting_hub">Aiming at our goal (optional)</label><select id="sc_targeting_hub"></select>
+<p class="hint">On while the robot aims to score; other shots are counted as shuttling. Without it, every shot counts as a hub shot.</p>
+</div>
+</section>
 <div id="savemsg"></div>
 <p><button class="btn primary big-btn" id="save">Save this robot</button> <a class="btn" href="/profiles">Cancel</a></p>
 </div>
@@ -97,7 +110,19 @@ function showReview(){
   el('game').innerHTML=Object.keys(DRAFT.games).map(function(k){return '<option value="'+k+'"'+(k===DRAFT.game?' selected':'')+'>'+escHtml(DRAFT.games[k])+'</option>';}).join('');
   var sc=DRAFT.shooting_choices.slice();if(DRAFT.shooting_key&&sc.indexOf(DRAFT.shooting_key)<0)sc.unshift(DRAFT.shooting_key);
   el('shoot').innerHTML='<option value="">(none)</option>'+sc.map(function(k){return '<option'+(k===DRAFT.shooting_key?' selected':'')+'>'+escHtml(k)+'</option>';}).join('');
+  renderScoring();
   el('review').scrollIntoView({behavior:'smooth'});
+}
+var SC_FIELDS=['velocity','setpoint','feeding','targeting_hub'];
+function renderScoring(){
+  var S=DRAFT.scoring||{choices:{}};DRAFT.scoring=S;
+  el('sc_inc').checked=!!S.include;el('sc_fields').hidden=!S.include;
+  SC_FIELDS.forEach(function(f){
+    var c=(S.choices[f]||[]).slice(),cur=S[f]||'';if(cur&&c.indexOf(cur)<0)c.unshift(cur);
+    el('sc_'+f).innerHTML='<option value="">(none)</option>'+c.map(function(k){return '<option'+(k===cur?' selected':'')+'>'+escHtml(k)+'</option>';}).join('');
+    el('sc_'+f).onchange=function(){S[f]=this.value;};
+  });
+  el('sc_inc').onchange=function(){S.include=this.checked;el('sc_fields').hidden=!S.include;};
 }
 function keySelect(m,i){
   var opts=DRAFT.supply_keys.slice(),cur=m.keys.supply||'';
@@ -148,6 +173,9 @@ function renderSubs(){
 }
 el('save').onclick=function(){
   DRAFT.robot_name=el('rname').value.trim()||'Robot';DRAFT.game=el('game').value;DRAFT.shooting_key=el('shoot').value;
+  var S=DRAFT.scoring||{};
+  if(S.include&&!(S.velocity&&S.setpoint&&DRAFT.shooting_key)){
+    el('savemsg').innerHTML='<div class="msg err">Shot counting needs the flywheel speed, its setpoint and the "Shooting" signal. Pick them, or untick "Count shots".</div>';return;}
   var miss=DRAFT.motors.filter(function(m){return m.include&&!m.keys.supply;});
   if(miss.length&&!confirm(miss.length+' motor(s) have no supply-current key and will be left out: '+miss.map(function(m){return m.name;}).join(', ')+'. Save anyway?'))return;
   el('save').disabled=true;

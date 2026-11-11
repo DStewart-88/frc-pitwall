@@ -76,6 +76,33 @@ class Period:
 
 
 @dataclass
+class Scoring:
+    """Keys and settings for the scoring module (shots counted from flywheel speed dips).
+
+    A ball pulls the flywheel speed down for about 0.1 s. While `shooting` is on and `feeding`
+    is open, a shot is counted each time the tracking error (velocity - setpoint) drops sharply.
+    Speeds are in the velocity key's own units (2026: rotations per second of the motor shaft).
+    """
+    velocity: KeyList
+    setpoint: KeyList
+    shooting: KeyList                                   # shoot command running (boolean)
+    feeding: KeyList = field(default_factory=list)      # feeder gate open (boolean); empty: = shooting
+    targeting_hub: KeyList = field(default_factory=list)  # aiming at our goal (boolean); empty: all hub
+    full_field: KeyList = field(default_factory=list)   # shuttling from the far zone (boolean)
+    full_field_setpoint: float = 99.5                   # without full_field: setpoint at or above this
+    dip: float = 1.5             # drop below the recent peak that counts as a ball
+    rearm: float = 0.75          # recovery from the bottom of a dip before the next ball can count
+    lockout_s: float = 0.10      # minimum time between counted balls
+    min_speed: float = 10.0      # nothing counted below this speed
+    overspeed: float = 2.0       # a peak this far above the running level is braking, not a ball
+    below: float = 0.75          # the dip must reach this far under the running level
+    hangover_s: float = 0.30     # keep counting this long after the gate closes
+    window_s: float = 0.20       # how far back the peak is taken from
+    level_s: float = 1.0         # how far back the running level (median tracking error) is taken from
+    burst_gap_s: float = 0.6     # shots closer than this belong to one burst (hopper dump)
+
+
+@dataclass
 class Unmeasured:
     name: str
     estimate_amps: float = 0.0
@@ -103,6 +130,7 @@ class Profile:
     motors: List[Motor] = field(default_factory=list)
     states: List[State] = field(default_factory=list)
     unmeasured: List[Unmeasured] = field(default_factory=list)
+    scoring: Optional[Scoring] = None     # no [scoring] section: no scoring report
 
     def subsystem(self, sid: str) -> Subsystem:
         for s in self.subsystems:
@@ -176,6 +204,19 @@ def load_profile(path: str) -> Profile:
     p.states.sort(key=lambda s: s.priority)
     for u in data.get("unmeasured", []):
         p.unmeasured.append(Unmeasured(name=u["name"], estimate_amps=float(u.get("estimate_amps", 0.0))))
+    sc = data.get("scoring")
+    if sc is not None:
+        for req in ("velocity", "setpoint", "shooting"):
+            if not _keys(sc.get(req)):
+                raise ProfileError(f"{path}: [scoring] needs a {req} key")
+        p.scoring = Scoring(velocity=_keys(sc["velocity"]), setpoint=_keys(sc["setpoint"]),
+                            shooting=_keys(sc["shooting"]), feeding=_keys(sc.get("feeding")),
+                            targeting_hub=_keys(sc.get("targeting_hub")),
+                            full_field=_keys(sc.get("full_field")))
+        for name in ("full_field_setpoint", "dip", "rearm", "lockout_s", "min_speed", "overspeed", "below",
+                     "hangover_s", "window_s", "level_s", "burst_gap_s"):
+            if name in sc:
+                setattr(p.scoring, name, float(sc[name]))
     for s in p.subsystems:
         for st in s.needed_in:
             if st not in {x.name for x in p.states} | {"Other"}:
