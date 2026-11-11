@@ -12,15 +12,16 @@ from .report.html import render
 
 
 # Bump when the report pages change, so the app rebuilds reports made by an older Pitwall.
-REPORT_VERSION = 6
+REPORT_VERSION = 7
 
 
 def _stem(file_name: str) -> str:
     return os.path.splitext(file_name)[0]
 
 
-def write_match_report(payload: Dict[str, Any], out_dir: str) -> str:
-    """Writes <stem>.html and <stem>.power.json; returns the HTML file name."""
+def write_match_report(payload: Dict[str, Any], out_dir: str, nav: Optional[Dict[str, Any]] = None) -> str:
+    """Writes <stem>.html and <stem>.power.json; returns the HTML file name. `nav` links the page to
+    the previous and next match and back to the event (see report.html.render)."""
     os.makedirs(out_dir, exist_ok=True)
     stem = _stem(payload["source"]["file"])
     saved = {k: v for k, v in payload.items() if k != "source"}
@@ -28,7 +29,7 @@ def write_match_report(payload: Dict[str, Any], out_dir: str) -> str:
     with open(os.path.join(out_dir, stem + ".power.json"), "w", encoding="utf-8") as f:
         json.dump(saved, f, indent=1)
     with open(os.path.join(out_dir, stem + ".html"), "w", encoding="utf-8") as f:
-        f.write(render(payload["power"], payload["identity"], payload["profile"], payload.get("scoring")))
+        f.write(render(payload["power"], payload["identity"], payload["profile"], payload.get("scoring"), nav))
     return stem + ".html"
 
 
@@ -98,8 +99,15 @@ def write_event(ev: Dict[str, Any], g: Dict[str, List[Dict[str, Any]]], folder: 
     mdir = os.path.join(folder, "matches")
     links, series, shots = {}, {}, {}
     chosen = {m["file"] for m in ev["matches"]}
+    order = [(m["label"], _stem(m["file"]) + ".html") for m in ev["matches"]]   # event order: Q, then E
+    navs: Dict[str, Dict[str, Any]] = {}
+    for k, (label, html_name) in enumerate(order):
+        navs[html_name] = {"prev": order[k - 1] if k > 0 else None,
+                           "next": order[k + 1] if k + 1 < len(order) else None, "event": "../index.html"}
     for p in g["matches"] + g["other"]:
-        html_name = write_match_report(p, mdir)
+        stem_html = _stem(p["source"]["file"]) + ".html"
+        nav = navs.get(stem_html) if p["source"]["file"] in chosen else {"event": "../index.html"}
+        html_name = write_match_report(p, mdir, nav)
         if p["source"]["file"] in chosen:
             links[p["identity"]["label"]] = "matches/" + html_name
             series[p["identity"]["label"]] = p["power"]["series"]

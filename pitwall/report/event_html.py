@@ -571,11 +571,61 @@ def shift_card_html(ev: Dict[str, Any], shoot: Optional[str]) -> str:
             f'</section>')
 
 
+# ---------------------------------------------------------------- overview tab
+
+def overview_html(ev: Dict[str, Any], links: Dict[str, str], power_stats: List[tuple], has_sc: bool,
+                  scoring_tiles, module_card, combined_observations, other: str) -> str:
+    """Each module's headline numbers, one match table across modules, and what to check."""
+    by_label = {s[1]: s for s in power_stats}
+    cards = [module_card("Power", "power", "", [by_label["Charge per match"], by_label["Matches with a brownout"],
+                                                by_label["Time left at first brownout"]])]
+    if has_sc and (ev.get("scoring") or {}).get("averages", {}).get("n"):
+        cards.append(module_card("Scoring", "scoring", "", scoring_tiles(ev)))
+    rows = []
+    for m in ev["matches"]:
+        href = links.get(m["label"])
+        lab = f'<a href="{esc(href)}">{esc(m["label"])}</a>' if href else esc(m["label"])
+        Bm, sc = m["brownout"], m.get("scoring")
+        first = fmt(Bm["first_time_left_s"], 1) if Bm["episodes"] else "—"
+        if Bm["episodes"] and Bm.get("first_period"):
+            first += f' <span class="muted small">{esc(Bm["first_period"])}</span>'
+        status = ("Counted" + (" (by hand)" if m.get("included_by_hand") else "")) if m["counted"] \
+            else f'<span class="muted">{esc(m["why_not"])}</span>'
+        cells = (f'<td>{lab}</td><td class="r num">{m["ah"]:.2f}</td><td class="r num">{Bm["episodes"]}</td>'
+                 f'<td class="r num">{first}</td>')
+        if has_sc:
+            cells += (f'<td class="r num">{sc["hub"] if sc else "—"}</td><td class="r num">{sc["shuttle"] if sc else "—"}</td>'
+                      f'<td class="r num">{fmt(sc["bps_flow_hub"], 2) if sc else "—"}</td>')
+        rows.append(f'<tr class="{"" if m["counted"] else "dim"}">{cells}<td>{status}</td></tr>')
+    head = ('<th>Match</th><th class="r">Ah</th><th class="r">Brownouts</th><th class="r">First brownout<br>s left</th>'
+            + ('<th class="r">Hub shots</th><th class="r">Shuttle shots</th><th class="r">Hub BPS<br>flowing</th>'
+               if has_sc else "") + '<th>Averages</th>')
+    groups = [("Power", ev["observations"])]
+    if has_sc:
+        groups.append(("Scoring", (ev.get("scoring") or {}).get("observations", [])))
+    obs = combined_observations(groups)
+    n, total = ev["averages"].get("n", 0), len(ev["matches"])
+    return (f'<div class="modcards">{"".join(cards)}</div>'
+            f'<section class="card"><h2>Matches</h2><p class="lead">Click a match for its report; it opens on the '
+            f'same tabs as this page.</p><div class="scroll"><table><thead><tr>{head}</tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table></div></section>'
+            f'<section class="card"><h2>Things to check</h2><ul class="obs">'
+            f'{obs or "<li class=muted>Nothing to act on or watch. Each tab lists its own notes too.</li>"}</ul></section>'
+            f'{other}'
+            f'<p class="muted small">Averages are per counted match ({n} of {total}), with the same rules for every '
+            f'module. A match isn\'t counted if it\'s a practice match, the robot was enabled for under 90% of it, a '
+            f'motor was missing from the CAN bus, or it drew under half the event\'s typical charge; Pitwall shows it '
+            f'anyway.</p>')
+
+
 # ---------------------------------------------------------------- page
 
 def render_event(ev: Dict[str, Any], series_by_label: Dict[str, Dict[str, Any]],
                  links: Dict[str, str], shots_by_label: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> str:
-    from .scoring_html import SECTION_CSS, event_section
+    from .scoring_html import SECTION_CSS, event_section, scoring_event_tiles
+    from .tabs import HEAD_JS, TABS_CSS, TABS_JS, combined_observations, module_card, panel, tabbar
+    match_links = links                                      # Overview: a match opens on its Overview tab
+    links = {k: v + "#power" for k, v in links.items()}      # Power tab: a match opens on its Power tab
     A, B, C = ev["averages"], ev["brownout"], ev.get("compare")
     n = A.get("n", 0)
     prev_rows = {r["key"]: r for r in C["rows"]} if C else {}
@@ -735,11 +785,15 @@ For time left at first brownout, a bigger number means the battery gave out earl
     if last and last != date:
         date = f"{date} – {last}"
 
-    scoring_html = event_section(ev, shots_by_label or {}, links)
-    nav = ('<nav class="jump" aria-label="Sections"><a href="#power">Power</a><a href="#scoring">Scoring</a></nav>'
-           if scoring_html else "")
+    scoring_body = event_section(ev, shots_by_label or {}, match_links, head=False)
+    has_sc = bool(scoring_body)
+    tabs = [("overview", "Overview"), ("power", "Power")] + ([("scoring", "Scoring")] if has_sc else [])
+    overview = overview_html(ev, match_links, stats, has_sc, scoring_event_tiles, module_card,
+                             combined_observations, other)
     return PAGE.format(
-        css=base_css() + SECTION_CSS, extra_css=EXTRA_CSS, nav=nav, scoring=scoring_html, donut_css=DONUT_CSS, donut_js=DONUT_JS, title=esc(ev["name"]), code=esc(ev["code"]),
+        css=base_css() + SECTION_CSS + TABS_CSS, extra_css=EXTRA_CSS, head_js=HEAD_JS, tabs_js=TABS_JS,
+        tabbar=tabbar(tabs), overview=overview,
+        scoring_panel=panel("scoring", "Scoring", scoring_body) if has_sc else "", donut_css=DONUT_CSS, donut_js=DONUT_JS, title=esc(ev["name"]), code=esc(ev["code"]),
         date=esc(date), profile=esc(ev["profile"]), builds=esc(", ".join(ev["builds"]) or "unknown"),
         n_matches=len(ev["matches"]), n=n, stats=stat_html, legend=legend,
         charge_chart=charge_by_match_svg(ev, links), charge_split=charge_split_html(ev),
@@ -767,6 +821,7 @@ PAGE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} · Pitwall event report</title>
+{head_js}
 <style>
 {css}
 {extra_css}
@@ -778,8 +833,10 @@ PAGE = """<!doctype html>
 <span class="meta">{n_matches} matches · builds {builds} · profile {profile}</span></div></header>
 <main>
 <div><p class="eyebrow">{code} · {date}</p><h1>{title}</h1></div>
-{nav}
-<section class="stats" id="power">{stats}</section>
+{tabbar}
+<div class="tabpanel" id="tab-overview" role="tabpanel"><h2 class="tabtitle">Overview</h2>{overview}</div>
+<div class="tabpanel" id="tab-power" role="tabpanel"><h2 class="tabtitle">Power</h2>
+<section class="stats">{stats}</section>
 
 {charge_split}
 
@@ -812,15 +869,15 @@ PAGE = """<!doctype html>
 {phase_card}
 
 <section class="card"><h2>Observations</h2><ul class="obs">{observations}</ul></section>
-<p class="muted small">Power averages are per counted match ({n} of {n_matches}). A match isn't counted if it's a practice match, the robot was enabled for under 90% of it,
-a motor was missing from the CAN bus, or it drew under half the event's typical charge; Pitwall shows it anyway.
+<p class="muted small">Averages are per counted match ({n} of {n_matches}); see the Overview tab for which matches count.
 {mode_note} The control system (roboRIO, radio, cameras, CANivore, Pigeon) isn't logged, so totals are slightly low.</p>
-{scoring}
-{other}
+</div>
+{scoring_panel}
 <footer>Made by Pitwall.</footer>
 </main>
 <div class="tip" id="tip"></div>
-<script>{donut_js}</script>
+<script>{donut_js}
+{tabs_js}</script>
 </body>
 </html>
 """

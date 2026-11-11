@@ -128,7 +128,7 @@ def _rebin(t: List[float], vals: List[float], width: float) -> tuple:
     return bt, bv
 
 
-def timeline_svg(series: Dict[str, Any], subs: List[Dict[str, Any]]) -> str:
+def timeline_svg(series: Dict[str, Any], subs: List[Dict[str, Any]], uid: str = "tl") -> str:
     t = series["t"]
     if not t:
         return ""
@@ -164,7 +164,7 @@ def timeline_svg(series: Dict[str, Any], subs: List[Dict[str, Any]]) -> str:
         v = min(max(v, vmin), vmax)
         return y2_top + h2 - (v - vmin) / (vmax - vmin) * h2
 
-    out = [f'<svg viewBox="0 0 {width} {y2_top + h2 + 30}" class="chart" id="tl" role="img" '
+    out = [f'<svg viewBox="0 0 {width} {y2_top + h2 + 30}" class="chart" id="{uid}" role="img" '
            f'aria-label="Current by subsystem and battery voltage through the match">']
     # game periods: inactive-hub shifts shaded, a thin line and a label at each period start
     pers = series.get("periods") or []
@@ -214,8 +214,8 @@ def timeline_svg(series: Dict[str, Any], subs: List[Dict[str, Any]]) -> str:
             continue
         out.append(f'<text x="{X(tt):.1f}" y="{y2_top + h2 + 18}" text-anchor="middle" class="muted small">{tt}s</text>')
     # hover layer
-    out.append(f'<line id="tl-x" x1="0" x2="0" y1="{top}" y2="{y2_top + h2}" stroke="{NAVY}" stroke-width="1" visibility="hidden"/>'
-               f'<rect id="tl-hit" x="{left}" y="{top}" width="{plot_w}" height="{y2_top + h2 - top}" fill="transparent"/>')
+    out.append(f'<line id="{uid}-x" x1="0" x2="0" y1="{top}" y2="{y2_top + h2}" stroke="{NAVY}" stroke-width="1" visibility="hidden"/>'
+               f'<rect id="{uid}-hit" x="{left}" y="{top}" width="{plot_w}" height="{y2_top + h2 - top}" fill="transparent"/>')
     out.append("</svg>")
     return "".join(out)
 
@@ -279,9 +279,14 @@ def base_css() -> str:
 
 
 def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str,
-           scoring: Optional[Dict[str, Any]] = None) -> str:
-    """The match page: power, then any other module's section (scoring)."""
-    from .scoring_html import SECTION_CSS, match_section
+           scoring: Optional[Dict[str, Any]] = None, nav: Optional[Dict[str, Any]] = None) -> str:
+    """The match page: an Overview tab, then a tab per module (Power, Scoring).
+
+    `nav` = {"prev": (label, href), "next": (label, href), "event": href} links a match page to
+    its neighbors when it's part of an event report."""
+    from .scoring_html import SECTION_CSS, legend_html, match_section, scoring_tiles, shots_timeline_svg
+    from .tabs import (HEAD_JS, TABS_CSS, TABS_JS, combined_observations, match_nav, module_card, panel,
+                       tabbar)
     T = result["totals"]
     B = result["brownout"]
     subs = result["subsystems"]
@@ -398,12 +403,45 @@ def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str,
         "total": result["series"]["total_a"],
     }, separators=(",", ":"))
 
-    scoring_html = match_section(scoring, result["series"])
-    nav = ('<nav class="jump" aria-label="Sections"><a href="#power">Power</a><a href="#scoring">Scoring</a></nav>'
-           if scoring_html else "")
+    has_sc = bool(scoring)
+    scoring_body = match_section(scoring, result["series"], head=False)
+    tabs = [("overview", "Overview"), ("power", "Power")] + ([("scoring", "Scoring")] if has_sc else [])
+    tab_bar = tabbar(tabs, match_nav(nav))
+
+    # Overview: each module's headline numbers, then current, battery and shots on one time axis
+    cards = [module_card("Power", "power", "", [
+        (f'{T["ah"]:.2f} Ah', "Charge used", f'{T["mean_a"]:.0f} A mean'),
+        (f'{T["min_v"]:.2f} V', "Lowest battery", f'{B["seconds_below_threshold"]:.1f} s below 6.75 V'),
+        (bo_main, "First brownout", (f'left in the match · {B["episodes"]} episode{"s" if B["episodes"] != 1 else ""}'
+                                     if B["episodes"] else "none this match")),
+    ])]
+    sc_ok = bool(scoring and scoring.get("available"))
+    if sc_ok:
+        cards.append(module_card("Scoring", "scoring", "", scoring_tiles(scoring)))
+    elif has_sc:
+        cards.append(f'<section class="card modcard"><h2>Scoring</h2><p class="lead">{esc(scoring.get("why", ""))}</p></section>')
+    shots_chart = ""
+    if sc_ok:
+        shots_chart = ('<div class="legend" style="margin-top:18px"><b class="small">SHOTS PER 2 S</b>'
+                       + legend_html() + '</div>' + shots_timeline_svg(scoring, result["series"]))
+    obs_all = combined_observations([("Power", result["observations"])]
+                                    + ([("Scoring", scoring.get("observations", []))] if sc_ok else []))
+    overview = (f'<div class="modcards">{"".join(cards)}</div>'
+                f'<section class="card"><h2>Current, battery{" and shots" if sc_ok else ""} through the match</h2>'
+                f'<p class="lead">One time axis for everything. Shaded shifts are the ones where our hub was inactive. '
+                f'Red ticks mark brownouts. Hover the top chart for 0.1 s values.</p>'
+                f'<div class="legend"><b class="small">CURRENT BY SUBSYSTEM</b>{legend}</div>'
+                f'{timeline_svg(result["series"], subs, "ov")}{shots_chart}</section>'
+                f'<section class="card"><h2>Things to check</h2><ul class="obs">'
+                f'{obs_all or "<li class=muted>Nothing flagged. Each tab lists its own notes too.</li>"}</ul></section>')
+    scoring_panel = panel("scoring", "Scoring", scoring_body) if has_sc else ""
+
     return PAGE.format(
-        css=base_css() + SECTION_CSS, title=esc(title), event=esc(ident.get("event") or "Practice"),
-        nav=nav, scoring=scoring_html,
+        css=base_css() + SECTION_CSS + TABS_CSS, head_js=HEAD_JS, tabs_js=TABS_JS, title=esc(title),
+        event=esc(ident.get("event") or "Practice"),
+        tabbar=tab_bar, overview_open='<div class="tabpanel" id="tab-overview" role="tabpanel"><h2 class="tabtitle">Overview</h2>',
+        overview=overview, power_open='<div class="tabpanel" id="tab-power" role="tabpanel"><h2 class="tabtitle">Power</h2>',
+        scoring_panel=scoring_panel,
         label=esc(ident["label"]), file=esc(ident["file"]), build=esc(build or "unknown"),
         branch=esc(ident.get("git_branch", "")), profile=esc(profile_name),
         stats=stat_html,
@@ -424,6 +462,7 @@ PAGE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} · Pitwall match report</title>
+{head_js}
 <style>
 {css}
 </style>
@@ -433,8 +472,10 @@ PAGE = """<!doctype html>
 <span class="meta">{file} · build {build} {branch} · profile {profile}</span></div></header>
 <main>
 <div><p class="eyebrow">{event}</p><h1>{label}</h1></div>
-{nav}
-<section class="stats" id="power">{stats}</section>
+{tabbar}
+{overview_open}{overview}</div>
+{power_open}
+<section class="stats">{stats}</section>
 
 <section class="card">
 <div class="row"><div><h2>Where the charge went</h2>
@@ -470,7 +511,8 @@ PAGE = """<!doctype html>
 <th class="r">Stalled Ah</th><th class="r">Sample ms</th></tr></thead><tbody>{motor_rows}</tbody></table></div></section>
 <p class="muted small">Charge and energy add up each motor's logged supply current over the time the robot was enabled, on a 20 ms grid; energy multiplies by battery voltage.
 {mode_note} The control system (roboRIO, radio, cameras, CANivore, Pigeon) isn't logged, so totals are slightly low.</p>
-{scoring}
+</div>
+{scoring_panel}
 <footer>Made by Pitwall from {file}.</footer>
 </main>
 <div class="tip" id="tip"></div>
@@ -484,7 +526,9 @@ PAGE = """<!doctype html>
     }});
   }});
   var D={tl_data};
-  var svg=document.getElementById('tl'),hit=document.getElementById('tl-hit'),line=document.getElementById('tl-x'),tip=document.getElementById('tip');
+  ['tl','ov'].forEach(function(u){{attach(u);}});
+  function attach(u){{
+  var svg=document.getElementById(u),hit=document.getElementById(u+'-hit'),line=document.getElementById(u+'-x'),tip=document.getElementById('tip');
   if(!svg||!hit)return;
   function show(ev){{
     var r=hit.getBoundingClientRect(),f=(ev.clientX-r.left)/r.width;
@@ -503,7 +547,9 @@ PAGE = """<!doctype html>
   }}
   function hide(){{tip.style.display='none';line.setAttribute('visibility','hidden');}}
   hit.addEventListener('mousemove',show);hit.addEventListener('mouseleave',hide);
+  }}
 }})();
+{tabs_js}
 </script>
 </body>
 </html>

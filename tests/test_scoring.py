@@ -148,12 +148,20 @@ class ScoringMatchTest(unittest.TestCase):
         self.assertTrue(any(o["rule"] == "compare-shots" for o in ev["scoring"]["observations"]))
         shots = {p["identity"]["label"]: p["scoring"]["shots"] for p in pays}
         html = render_event(ev, {p["identity"]["label"]: p["power"]["series"] for p in pays}, {}, shots)
-        self.assertIn('id="scoring"', html)
+        self.assertIn('id="tab-scoring"', html)
         self.assertIn("Shots through each match", html)
         self.assertIn("Compared with EARLIER", html)
-        mp = render(pays[0]["power"], pays[0]["identity"], "Test bot", pays[0]["scoring"])
+        for tab in ("overview", "power", "scoring"):
+            self.assertIn(f'data-tab="{tab}"', html)
+            self.assertIn(f'id="tab-{tab}"', html)
+        self.assertIn("Things to check", html)
+        mp = render(pays[0]["power"], pays[0]["identity"], "Test bot", pays[0]["scoring"],
+                    {"prev": None, "next": ("Q13", "q13.html"), "event": "../index.html"})
         self.assertIn("Shots by period", mp)
         self.assertIn("Bursts", mp)
+        self.assertIn('id="tab-overview"', mp)
+        self.assertIn('data-base="q13.html"', mp)           # next match, keeping the tab
+        self.assertIn("Current, battery and shots through the match", mp)
 
     def test_without_scoring_section(self):
         prof = os.path.join(self.dir, "plain.toml")
@@ -165,8 +173,8 @@ class ScoringMatchTest(unittest.TestCase):
         ev = build_event("TEST", [r], [], load_profile(prof))
         self.assertEqual(ev["scoring"]["averages"], {"n": 0})
         html = render_event(ev, {}, {}, {})
-        self.assertNotIn('id="scoring"', html)
-        self.assertNotIn('id="scoring"', render(r["power"], r["identity"], "Test bot", None))
+        self.assertNotIn('id="tab-scoring"', html)
+        self.assertNotIn('id="tab-scoring"', render(r["power"], r["identity"], "Test bot", None))
 
     def test_missing_keys(self):
         prof = os.path.join(self.dir, "other.toml")
