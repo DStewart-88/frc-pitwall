@@ -124,20 +124,29 @@ def shots_timeline_svg(sc: Dict[str, Any], series: Dict[str, Any]) -> str:
     return "".join(out)
 
 
-def match_section(sc: Optional[Dict[str, Any]], series: Dict[str, Any]) -> str:
-    """The Scoring section of a match page ('' if the profile has no [scoring] section)."""
+def scoring_tiles(sc: Dict[str, Any]) -> List[tuple]:
+    """The match's headline scoring numbers (also used on the Overview tab)."""
+    C, R = sc["counts"], sc["rates"]
+    shuttle = C["shuttle_mid"]["total"] + C["shuttle_full"]["total"]
+    return [
+        (str(C["hub"]["total"]), "Hub shots", f'{C["hub"]["auto"]} in auto · {C["hub"]["teleop"]} in teleop'),
+        (str(shuttle), "Shuttle shots", f'{C["shuttle_mid"]["total"]} mid · {C["shuttle_full"]["total"]} full'),
+        (fmt(R["hub"]["bps_flow"], 2), "Hub BPS while flowing", f'{fmt(R["hub"]["bps_trigger"], 2)} per trigger second'),
+    ]
+
+
+def match_section(sc: Optional[Dict[str, Any]], series: Dict[str, Any], head: bool = True) -> str:
+    """The Scoring section of a match page ('' if the profile has no [scoring] section).
+    head=False leaves out the section heading (the page's Scoring tab names it)."""
     if not sc:
         return ""
-    head = ('<div class="sect" id="scoring"><p class="eyebrow">Scoring</p><h1>Shots</h1></div>')
+    head = ('<div class="sect" id="scoring"><p class="eyebrow">Scoring</p><h1>Shots</h1></div>') if head else ""
     if not sc.get("available"):
         return head + f'<section class="card"><p class="lead">{esc(sc.get("why", "No scoring data."))}</p></section>'
     C, R = sc["counts"], sc["rates"]
-    shuttle = C["shuttle_mid"]["total"] + C["shuttle_full"]["total"]
     sizes = [b["balls"] for b in sc["bursts"] if b["balls"] >= 2]
     trig = sc["trigger_s"]
-    stats = [
-        (str(C["hub"]["total"]), "Hub shots", f'{C["hub"]["auto"]} in auto · {C["hub"]["teleop"]} in teleop'),
-        (str(shuttle), "Shuttle shots", f'{C["shuttle_mid"]["total"]} mid · {C["shuttle_full"]["total"]} full'),
+    stats = scoring_tiles(sc)[:2] + [
         (fmt(R["hub"]["bps_flow"], 2), "Hub BPS while flowing", f'{fmt(R["hub"]["bps_trigger"], 2)} per trigger second'),
         (fmt(R["shuttle"]["bps_flow"], 2), "Shuttle BPS while flowing",
          f'{fmt(R["shuttle"]["bps_trigger"], 2)} per trigger second'),
@@ -184,7 +193,7 @@ def match_section(sc: Optional[Dict[str, Any]], series: Dict[str, Any]) -> str:
     return f"""{head}
 <section class="stats">{_stats(stats)}</section>
 <section class="card"><h2>Shots through the match</h2>
-<p class="lead">Shots per 2 s, by what the robot was aiming at. The time axis matches the power chart above. Shaded shifts are the ones where our hub was inactive.</p>
+<p class="lead">Shots per 2 s, by what the robot was aiming at, on the same time axis as the power chart. Shaded shifts are the ones where our hub was inactive.</p>
 <div class="legend">{legend_html()}</div>
 {shots_timeline_svg(sc, series)}
 </section>
@@ -378,9 +387,28 @@ def _shift_table(ev: Dict[str, Any]) -> str:
             f'<tbody>{"".join(rows)}</tbody></table></div></section>')
 
 
+def scoring_event_tiles(ev: Dict[str, Any]) -> List[tuple]:
+    """The event's headline scoring numbers, with the change from the previous event."""
+    S = ev["scoring"]
+    A, PC = S["averages"], S.get("compare")
+    pname = ev["compare"]["name"] if (PC and ev.get("compare")) else ""
+    prow = {r["key"]: r for r in PC["rows"]} if PC else {}
+
+    def vs(key, nd):
+        r = prow.get(key)
+        return f'{fmt_delta(r["delta"], nd)} vs {pname}' if r and r["delta"] is not None else ""
+    return [
+        (fmt(A["hub"], 0), "Hub shots per match", vs("hub", 0) or f'mean · median {fmt(A["hub_median"], 0)}'),
+        (fmt(A["shuttle"], 0), "Shuttle shots per match",
+         f'{fmt(A["shuttle_mid"], 0)} mid · {fmt(A["shuttle_full"], 0)} full'),
+        (fmt(A["bps_flow_hub"], 2), "Hub BPS while flowing", vs("bps_flow_hub", 2) or "median"),
+    ]
+
+
 def event_section(ev: Dict[str, Any], shots_by_label: Dict[str, List[Dict[str, Any]]],
-                  links: Dict[str, str]) -> str:
-    """The Scoring section of an event page ('' if no match has scoring data)."""
+                  links: Dict[str, str], head: bool = True) -> str:
+    """The Scoring section of an event page ('' if no match has scoring data).
+    head=False leaves out the section heading (the page's Scoring tab names it)."""
     S = ev.get("scoring")
     if not S or not any(m.get("scoring") for m in ev["matches"]):
         return ""
@@ -393,7 +421,7 @@ def event_section(ev: Dict[str, Any], shots_by_label: Dict[str, List[Dict[str, A
         r = prow.get(key)
         return f'{fmt_delta(r["delta"], nd)} vs {pname}' if r and r["delta"] is not None else ""
 
-    head = '<div class="sect" id="scoring"><p class="eyebrow">Scoring</p><h1>Shots</h1></div>'
+    head = '<div class="sect" id="scoring"><p class="eyebrow">Scoring</p><h1>Shots</h1></div>' if head else ""
     if not n:
         return head + '<section class="card"><p class="lead">No counted match has scoring data.</p></section>'
     stats = [

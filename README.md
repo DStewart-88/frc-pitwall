@@ -9,6 +9,11 @@ Each report has a section per module:
 
 A module only appears when the robot profile sets it up.
 
+Event and match pages have tabs: **Overview** (each module's headline numbers, the match list,
+and what needs attention), then one tab per module. Switching tabs keeps you on the same match,
+and a match link opens on the tab you're on. Match pages also step to the previous or next match
+without leaving the tab. Each page is still a single file.
+
 Built by FRC Team 88 (TJ²) for our own robot, and open for any team to use or build on.
 
 ## Status
