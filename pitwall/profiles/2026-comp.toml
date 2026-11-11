@@ -336,3 +336,14 @@ supply = ["/RealOutputs/Intake/PivotSupplyCurrent", "/Intake/Pivot/SupplyCurrent
 [[unmeasured]]
 name = "Control system (roboRIO, radio, Limelights, CANivore, Pigeon)"
 estimate_amps = 0      # 0 = shown as "not measured"; fill in from a bench measurement
+
+# Scoring: shots counted from flywheel speed dips (see pitwall/scoring.py). Hub shots while the
+# trajectory solver aims at our hub; otherwise shuttle shots, "full field" when the setpoint is
+# the fixed 100 rps used from the opponent's zone.
+[scoring]
+velocity = "/RealOutputs/Shooter/Velocity"
+setpoint = "/RealOutputs/Trajectory/ShooterSpeed"
+shooting = "/RealOutputs/RobotContainer/IsShooting"
+feeding = "/RealOutputs/RobotContainer/OnTargetRobot"
+targeting_hub = "/RealOutputs/TrajectorySolver/IsTargetingHub"
+full_field = "/RealOutputs/TrajectorySolver/IsFullField"   # not logged yet; setpoint >= 99.5 is used instead

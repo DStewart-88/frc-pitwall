@@ -12,7 +12,7 @@ from .report.html import render
 
 
 # Bump when the report pages change, so the app rebuilds reports made by an older Pitwall.
-REPORT_VERSION = 5
+REPORT_VERSION = 6
 
 
 def _stem(file_name: str) -> str:
@@ -28,7 +28,7 @@ def write_match_report(payload: Dict[str, Any], out_dir: str) -> str:
     with open(os.path.join(out_dir, stem + ".power.json"), "w", encoding="utf-8") as f:
         json.dump(saved, f, indent=1)
     with open(os.path.join(out_dir, stem + ".html"), "w", encoding="utf-8") as f:
-        f.write(render(payload["power"], payload["identity"], payload["profile"]))
+        f.write(render(payload["power"], payload["identity"], payload["profile"], payload.get("scoring")))
     return stem + ".html"
 
 
@@ -96,19 +96,21 @@ def make_event(code: str, g: Dict[str, List[Dict[str, Any]]], profile, *, name: 
 def write_event(ev: Dict[str, Any], g: Dict[str, List[Dict[str, Any]]], folder: str) -> str:
     """Writes index.html, event.json and matches/ into `folder`; returns the index path."""
     mdir = os.path.join(folder, "matches")
-    links, series = {}, {}
+    links, series, shots = {}, {}, {}
     chosen = {m["file"] for m in ev["matches"]}
     for p in g["matches"] + g["other"]:
         html_name = write_match_report(p, mdir)
         if p["source"]["file"] in chosen:
             links[p["identity"]["label"]] = "matches/" + html_name
             series[p["identity"]["label"]] = p["power"]["series"]
+            if (p.get("scoring") or {}).get("available"):
+                shots[p["identity"]["label"]] = p["scoring"]["shots"]
     ev["report_version"] = REPORT_VERSION
     with open(os.path.join(folder, "event.json"), "w", encoding="utf-8") as f:
         json.dump(ev, f, indent=1)
     index = os.path.join(folder, "index.html")
     with open(index, "w", encoding="utf-8") as f:
-        f.write(render_event(ev, series, links))
+        f.write(render_event(ev, series, links, shots))
     return index
 
 

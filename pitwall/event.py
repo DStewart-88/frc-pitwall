@@ -23,6 +23,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 
 from . import __version__
 from .cache import ANALYSIS_VERSION
+from .modules import EXTRA
 
 SCHEMA = 1
 TYPE_ORDER = {"P": 0, "Q": 1, "E": 2}
@@ -70,6 +71,7 @@ def match_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
                               "saturated_share": mo["saturated_share"],
                               "peaks_reliable": mo["peaks_reliable"]} for mo in P["motors"]},
         "observations": P["observations"],
+        **{mod.name: mod.summary(payload.get(mod.name)) for mod in EXTRA},
     }
 
 
@@ -162,7 +164,11 @@ def build_event(code: str, payloads: List[Dict[str, Any]], others: List[Dict[str
         "skipped": skipped or [],
         "compare": None,
     }
+    for mod in EXTRA:
+        ev[mod.name] = {"averages": mod.roll_up(counted), "compare": None, "observations": []}
     ev["observations"] = observations(ev)
+    for mod in EXTRA:
+        ev[mod.name]["observations"] = mod.observations(ev)
     return ev
 
 
@@ -351,13 +357,22 @@ def attach_comparison(cur: Dict[str, Any], prev: Optional[Dict[str, Any]]) -> No
         return
     cur["compare"] = compare(cur, prev)
     cur["observations"] = observations(cur)
+    for mod in EXTRA:
+        if cur.get(mod.name):
+            cur[mod.name]["compare"] = mod.compare(cur[mod.name]["averages"],
+                                                   (prev.get(mod.name) or {}).get("averages"))
+            cur[mod.name]["observations"] = mod.observations(cur)
 
 
 def strip_for_compare(ev: Dict[str, Any]) -> Dict[str, Any]:
     """What a later event needs from this one (keeps event.json files small and stable)."""
-    return {k: ev[k] for k in ("schema", "pitwall", "code", "name", "profile", "current_mode",
-                               "first_stamp", "last_stamp", "subsystem_info", "states",
-                               "averages", "brownout", "counted")}
+    out = {k: ev[k] for k in ("schema", "pitwall", "code", "name", "profile", "current_mode",
+                              "first_stamp", "last_stamp", "subsystem_info", "states",
+                              "averages", "brownout", "counted")}
+    for mod in EXTRA:
+        if ev.get(mod.name):
+            out[mod.name] = {"averages": ev[mod.name]["averages"]}
+    return out
 
 
 # ---------------------------------------------------------------- observations

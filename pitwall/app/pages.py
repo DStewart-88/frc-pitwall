@@ -155,7 +155,12 @@ then you check what it found. That's saved on this computer and used for every e
         if s.get("counted"):
             nums = (f'<div class="nums"><div><b>{s["ah"]:.2f}</b><span>Ah per match</span></div>'
                     f'<div><b>{s["with_brownout"]} of {s["brownout_matches"]}</b><span>matches with a brownout</span></div>'
-                    f'<div><b>{s["counted"]}</b><span>matches counted</span></div></div>')
+                    + (f'<div><b>{s["hub_shots"]:.0f}</b><span>hub shots per match</span></div>'
+                       if s.get("hub_shots") is not None else
+                       f'<div><b>{s["counted"]}</b><span>matches counted</span></div>')
+                    + '</div>')
+            if s.get("hub_shots") is not None:
+                when += f' · {s["counted"]} matches counted'
         cards.append(f'<a class="evcard" href="/events/{esc(e["id"])}/"><h3>{esc(e["name"] or "New event")}</h3>'
                      f'<div class="meta">{esc(s.get("code") or "")}{" · " if s.get("code") else ""}{esc(when)}</div>{nums}'
                      f'<span class="pill" data-ev="{esc(e["id"])}"><i></i>{esc(st.get("state", ""))}</span></a>')

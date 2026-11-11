@@ -2,7 +2,12 @@
 
 Pitwall turns FRC robot logs into match and event reports that anyone on the team can read in a minute. It runs on a pit laptop with no network, reads AdvantageKit `.wpilog` files, and learns the robot's motors and subsystems from a saved robot profile.
 
-The first report is a **power budget**: how much charge the battery delivered each match, and which subsystems and motors used it.
+Each report has a section per module:
+
+- **Power**: how much charge the battery delivered each match, which subsystems and motors used it, and when the battery gave out.
+- **Scoring**: how many balls the robot shot (hub and shuttle shots separately), how fast, and in which shift. Shots are counted from the flywheel speed, so no robot code change is needed.
+
+A module only appears when the robot profile sets it up.
 
 Built by FRC Team 88 (TJ²) for our own robot, and open for any team to use or build on.
 
@@ -115,6 +120,20 @@ python3 -m pitwall keys LOG [FILTER]      # list what a log contains
 - Totals are reliable; peaks are "as logged". A motor whose current is logged slowly misses
   short spikes, and the report flags it.
 
+## How shots are counted
+
+- Each ball pulls the flywheel speed down by about 5-6 rps for roughly 40 ms. While the shoot
+  command runs and the feeder gate is open, Pitwall counts a shot each time the tracking error
+  (speed minus setpoint) drops sharply. It's the October 2026 shot-counter logic, with one
+  change: dips are judged against the flywheel's own running level instead of the setpoint,
+  because from October the flywheel runs 1.5-2 rps above its setpoint while feeding.
+- Each shot is filed by what the robot was aiming at: hub, shuttle mid (from the neutral zone)
+  or shuttle full (from the opponent's zone).
+- **These are shots, not scored balls**: misses count. Without video to check against, counts
+  carry about ±25% uncertainty; comparisons between matches and events are more reliable.
+- BPS is given two ways: while balls are flowing (inside bursts of 4 or more), and per second
+  of holding the trigger.
+
 ## Robot profiles
 
 A profile (a `.toml` file; the example is `pitwall/profiles/2026-comp.toml`) says what each motor is, which subsystem it belongs to, and
@@ -128,6 +147,11 @@ are Auto, Transition, Alliance Shifts 1-4 and End Game, and each alliance shift 
 our hub is active in it, based on the game data (which alliance's hub goes inactive first) and
 our alliance station. Reports then break current down by shift and by hub active/inactive.
 Without periods, reports fall back to quarters of the enabled time.
+
+The `[scoring]` section turns on shot counting: the flywheel speed and setpoint keys, the
+"shooting" signal, and optionally the feeder gate and "aiming at our goal" keys. Detector
+settings (dip size, lockout, ...) can be changed there too; the defaults are in
+`pitwall/profile.py`. Robot setup in the app picks these keys for you.
 
 ## Checking the numbers
 

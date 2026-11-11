@@ -278,7 +278,10 @@ def base_css() -> str:
             + BASE_CSS)
 
 
-def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str) -> str:
+def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str,
+           scoring: Optional[Dict[str, Any]] = None) -> str:
+    """The match page: power, then any other module's section (scoring)."""
+    from .scoring_html import SECTION_CSS, match_section
     T = result["totals"]
     B = result["brownout"]
     subs = result["subsystems"]
@@ -395,8 +398,12 @@ def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str) -> 
         "total": result["series"]["total_a"],
     }, separators=(",", ":"))
 
+    scoring_html = match_section(scoring, result["series"])
+    nav = ('<nav class="jump" aria-label="Sections"><a href="#power">Power</a><a href="#scoring">Scoring</a></nav>'
+           if scoring_html else "")
     return PAGE.format(
-        css=base_css(), title=esc(title), event=esc(ident.get("event") or "Practice"),
+        css=base_css() + SECTION_CSS, title=esc(title), event=esc(ident.get("event") or "Practice"),
+        nav=nav, scoring=scoring_html,
         label=esc(ident["label"]), file=esc(ident["file"]), build=esc(build or "unknown"),
         branch=esc(ident.get("git_branch", "")), profile=esc(profile_name),
         stats=stat_html,
@@ -416,17 +423,18 @@ PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} · Pitwall power report</title>
+<title>{title} · Pitwall match report</title>
 <style>
 {css}
 </style>
 </head>
 <body>
-<header><div class="in"><span class="brand">TJ² <b>PITWALL</b> · POWER REPORT</span>
+<header><div class="in"><span class="brand">TJ² <b>PITWALL</b> · MATCH REPORT</span>
 <span class="meta">{file} · build {build} {branch} · profile {profile}</span></div></header>
 <main>
 <div><p class="eyebrow">{event}</p><h1>{label}</h1></div>
-<section class="stats">{stats}</section>
+{nav}
+<section class="stats" id="power">{stats}</section>
 
 <section class="card">
 <div class="row"><div><h2>Where the charge went</h2>
@@ -460,10 +468,10 @@ PAGE = """<!doctype html>
 <div class="scroll"><table><thead><tr><th>Motor</th><th>Subsystem</th><th class="r">CAN</th><th class="r">Ah</th><th class="r">Returned Ah</th>
 <th class="r">Mean A</th><th class="r">95th pct A</th><th class="r">Peak 1 s A</th><th class="r">Active s</th><th class="r">Full output</th>
 <th class="r">Stalled Ah</th><th class="r">Sample ms</th></tr></thead><tbody>{motor_rows}</tbody></table></div></section>
-
-<footer>Charge and energy add up each motor's logged supply current over the time the robot was enabled, on a 20 ms grid; energy multiplies by battery voltage.
-{mode_note} The control system (roboRIO, radio, cameras, CANivore, Pigeon) isn't logged, so totals are slightly low.
-Made by Pitwall from {file}.</footer>
+<p class="muted small">Charge and energy add up each motor's logged supply current over the time the robot was enabled, on a 20 ms grid; energy multiplies by battery voltage.
+{mode_note} The control system (roboRIO, radio, cameras, CANivore, Pigeon) isn't logged, so totals are slightly low.</p>
+{scoring}
+<footer>Made by Pitwall from {file}.</footer>
 </main>
 <div class="tip" id="tip"></div>
 <script>
