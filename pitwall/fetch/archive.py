@@ -1,19 +1,20 @@
 """The team log archive: where every fetched log is kept, sorted, plus the index of what's
-already been copied.
+already been copied. The layout (Doug, Nov 12):
 
-  <archive>/<season> Logs/<YYYY-MM-DD>_<CODE>[_<Name>]/       match logs
-                                 .../practice/                practice at the event
-                                 .../boot/                    never enabled: kept, never in a report
-                                 .../hoot/<session>/          Phoenix and REV logs from the event
-  <archive>/<season> Logs/practice/<YYYY-MM-DD>/              practice away from events (same boot/ and hoot/)
-  <archive>/<season> Logs/undated/                            no clock and no time in the name
+  <archive>/2026/01 events/2026-10-24_NHMAN_RiverRage/        match logs and practice at the event
+                                                .../boot/     never enabled: kept, never in a report
+                                                .../hoot/     Phoenix and REV logs
+  <archive>/2026/02 practice/2026-10-24_after_NHMAN_RiverRage/2026-10-27/   (same boot/ and hoot/)
+  <archive>/2026/02 practice/2026-01-01_build-season/...      practice before the season's first event
+  <archive>/2026/02 practice/undated/                         no clock and no time in the name
   .../unreadable/                                             a .wpilog Pitwall couldn't open
   <archive>/.pitwall/index.json                               every file already copied (name, size, checksum)
 
-An event folder that's already in the archive is reused when its name contains the event
-code (2026-10-24_NHMAN_RiverRage, Newton Logs), so the fetch fits the archive as it is.
-A log's "event dates" are the days its event's FMS match logs were recorded; a practice log
-on one of those days goes with the event, any other practice log goes by its date.
+Practice is grouped by the event before it, which is known the day the practice happens, so a
+group's name never changes; groups and day folders start with a date, so they sort in time
+order. An event folder already in 01 events is found by its code (<date>_<CODE>[_<Name>]); a
+new one is named the same way. An event runs from its folder's date (or first match day) to
+its last FMS match day, and practice on those days goes with the event.
 """
 
 import datetime as dt
@@ -21,13 +22,26 @@ import json
 import os
 import re
 import tempfile
-from typing import Any, Dict, Iterable, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .identify import AKIT_STAMP, LogInfo, event_dates, stamp_from_name
 
 INDEX_VERSION = 1
+EVENTS, PRACTICE = "01 events", "02 practice"
+SEASON_DIR = re.compile(r"^\d{4}$")
+EVENT_DIR = re.compile(r"^(\d{4}-\d{2}-\d{2})_([A-Za-z0-9]+)(?:_(.+))?$")
+DAY_DIR = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 NAME_MATCH = re.compile(r"_([pqe])(\d+)\.wpilog$", re.I)
 NAME_EVENT = re.compile(r"^akit_\d{2}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_([a-z0-9]+)(?:_|\.wpilog$)", re.I)
+
+
+@dataclass
+class Event:
+    code: str
+    start: str                # first day (its folder's date, or its first match day)
+    end: str                  # last match day
+    folder: Optional[str]
 
 
 def file_key(name: str, size: int) -> str:
@@ -118,57 +132,126 @@ class Archive:
     # ------------------------------------------------------------ where things go
 
     def season_dir(self, date: Optional[str]) -> str:
-        year = date[:4] if date else str(dt.date.today().year)
-        return os.path.join(self.root, f"{year} Logs")
+        return os.path.join(self.root, date[:4] if date else str(dt.date.today().year))
 
-    def event_dir(self, code: str, first_date: Optional[str], name: str = "") -> str:
-        season = self.season_dir(first_date)
-        pat = re.compile(rf"(^|[_ .-]){re.escape(code)}([_ .-]|$)", re.I)
+    def seasons(self) -> List[str]:
         try:
-            existing = sorted(d for d in os.listdir(season)
-                              if os.path.isdir(os.path.join(season, d)) and pat.search(d))
+            return sorted(os.path.join(self.root, d) for d in os.listdir(self.root)
+                          if SEASON_DIR.match(d) and os.path.isdir(os.path.join(self.root, d)))
         except OSError:
-            existing = []
-        if existing:
-            return os.path.join(season, existing[0])
-        label = f"{first_date or 'undated'}_{code}"
-        if name and name.strip().upper() != code:
-            label += "_" + re.sub(r"[^A-Za-z0-9]+", "-", name.strip()).strip("-")
-        return os.path.join(season, label)
+            return []
+
+    def events(self, dates: Dict[str, List[str]], names: Optional[Dict[str, str]] = None) -> Dict[str, Event]:
+        """Every event the archive knows: its folders in 01 events, and the days of its FMS
+        match logs. An event runs from its folder's date (or first match day) to its last match day."""
+        names = names or {}
+        out: Dict[str, Event] = {}
+        for season in self.seasons():
+            folder = os.path.join(season, EVENTS)
+            try:
+                subs = sorted(os.listdir(folder))
+            except OSError:
+                continue
+            for d in subs:
+                m = EVENT_DIR.match(d)
+                if m and os.path.isdir(os.path.join(folder, d)):
+                    code = m.group(2).upper()
+                    if code not in out:
+                        out[code] = Event(code, m.group(1), m.group(1), os.path.join(folder, d))
+        for code, ds in dates.items():
+            if not ds:
+                continue
+            ev = out.get(code)
+            if ev is None:
+                out[code] = Event(code, ds[0], ds[-1], None)
+            else:
+                ev.start, ev.end = min(ev.start, ds[0]), max(ev.end, ds[-1])
+        for code, ev in out.items():
+            if ev.folder is None:
+                label = f"{ev.start}_{code}"
+                name = names.get(code, "").strip()
+                if name and name.upper() != code:
+                    label += "_" + re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-")
+                ev.folder = os.path.join(self.season_dir(ev.start), EVENTS, label)
+        return out
+
+    def practice_group(self, day: str, events: Dict[str, Event]) -> str:
+        """The practice folder for a day: named for the event before it that season, which is
+        known the day the practice happens, so the name never has to change."""
+        before = [e for e in events.values() if e.start <= day and e.start[:4] == day[:4]]
+        if not before:
+            return f"{day[:4]}-01-01_build-season"
+        e = max(before, key=lambda e: (e.start, e.code))
+        label = os.path.basename(e.folder or "")
+        m = EVENT_DIR.match(label)
+        rest = f"{m.group(2)}_{m.group(3)}" if m and m.group(3) else (m.group(2) if m else e.code)
+        return f"{e.start}_after_{rest}"
 
     def place(self, info: LogInfo, rel: str, dates: Dict[str, List[str]],
-              names: Optional[Dict[str, str]] = None) -> Dict[str, Optional[str]]:
+              names: Optional[Dict[str, str]] = None,
+              events: Optional[Dict[str, Event]] = None) -> Dict[str, Optional[str]]:
         """Where a log goes: {"dir": folder for it, "event": event code it belongs to or None}."""
-        names = names or {}
+        evs = events if events is not None else self.events(dates, names)
         day = info.date
         code: Optional[str] = None
         if info.kind == "match" and info.event:
             code = info.event
         elif day:
-            here = [c for c, ds in dates.items() if day in ds]
+            here = sorted(c for c, e in evs.items() if e.start <= day <= e.end)
             if info.event in here:
                 code = info.event
             elif here:
                 code = here[0]
-        elif info.event in dates and info.kind in ("hoot", "revlog"):
+        elif info.event in evs and info.kind in ("hoot", "revlog"):
             code = info.event
+        if code and code not in evs:           # a match on a day no event covers yet
+            evs = dict(evs)
+            evs[code] = Event(code, day or "undated", day or "undated",
+                              os.path.join(self.season_dir(day), EVENTS, f"{day or 'undated'}_{code}"))
         if code:
-            base = self.event_dir(code, (dates.get(code) or [day])[0], names.get(code, ""))
+            base = evs[code].folder or ""
         elif day:
-            base = os.path.join(self.season_dir(day), "practice", day)
+            base = os.path.join(self.season_dir(day), PRACTICE, self.practice_group(day, evs), day)
         else:
-            base = os.path.join(self.season_dir(None), "undated")
-        if info.kind in ("hoot", "revlog"):
-            parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
-            sub = os.path.join("hoot", *parent.split("/")) if parent else "hoot"
-            return {"dir": os.path.join(base, sub), "event": code}
-        if info.kind == "match":
-            return {"dir": base, "event": code}
-        if info.kind == "practice":
-            return {"dir": os.path.join(base, "practice") if code else base, "event": code}
-        if info.kind == "boot":
-            return {"dir": os.path.join(base, "boot"), "event": code}
-        return {"dir": os.path.join(base, "unreadable"), "event": code}
+            base = os.path.join(self.season_dir(None), PRACTICE, "undated")
+        sub = {"match": "", "practice": "", "boot": "boot", "hoot": "hoot", "revlog": "hoot"}.get(info.kind,
+                                                                                                "unreadable")
+        return {"dir": os.path.join(base, sub) if sub else base, "event": code}
+
+    # ------------------------------------------------------------ one-time tidy-up
+
+    def regroup_plan(self) -> List[Tuple[str, str]]:
+        """Practice day folders sitting straight in 02 practice, and the group folder each
+        belongs in (by the same rule a fetch uses): [(from, to)]."""
+        evs = self.events(known_event_dates(self))
+        plan = []
+        for season in self.seasons():
+            prac = os.path.join(season, PRACTICE)
+            try:
+                subs = sorted(os.listdir(prac))
+            except OSError:
+                continue
+            for d in subs:
+                if DAY_DIR.match(d) and os.path.isdir(os.path.join(prac, d)):
+                    plan.append((os.path.join(prac, d), os.path.join(prac, self.practice_group(d, evs), d)))
+        return plan
+
+    def regroup(self, plan: List[Tuple[str, str]]) -> List[str]:
+        """Carry out a regroup plan, keeping the index's paths right. Returns any problems."""
+        problems = []
+        for src, dst in plan:
+            if os.path.exists(dst):
+                problems.append(f"{dst} already exists; {src} left where it is")
+                continue
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            os.replace(src, dst)
+            a = os.path.relpath(src, self.root).replace(os.sep, "/") + "/"
+            b = os.path.relpath(dst, self.root).replace(os.sep, "/") + "/"
+            for e in self.files.values():
+                if e["path"].startswith(a):
+                    e["path"] = b + e["path"][len(a):]
+        self.save()
+        return problems
 
 
 def known_event_dates(archive: Archive, more: Iterable[LogInfo] = ()) -> Dict[str, List[str]]:

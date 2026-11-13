@@ -128,7 +128,8 @@ class PlaceTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
         self.a = Archive(self.dir)
-        self.season = os.path.join(self.dir, "2026 Logs")
+        self.events = os.path.join(self.dir, "2026", "01 events")
+        self.practice = os.path.join(self.dir, "2026", "02 practice")
 
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
@@ -141,33 +142,75 @@ class PlaceTest(unittest.TestCase):
         names = {"NHALT": "Battle of the Bay"}
         match = LogInfo("match", event="NHALT", match="Q2", when="2026-11-07T09:07:10")
         self.assertEqual(self.rel(self.a.place(match, "x.wpilog", dates, names)),
-                         "2026 Logs/2026-11-07_NHALT_Battle-of-the-Bay")
-        # The file name (and the log) say NHALT, but it was recorded at the shop a week later.
+                         "2026/01 events/2026-11-07_NHALT_Battle-of-the-Bay")
+        # The log says NHALT, but it was recorded at the shop a week later: practice after NHALT.
         shop = LogInfo("practice", event="NHALT", when="2026-11-14T18:00:00")
-        w = self.a.place(shop, "x.wpilog", dates)
-        self.assertEqual((self.rel(w), w["event"]), ("2026 Logs/practice/2026-11-14", None))
+        w = self.a.place(shop, "x.wpilog", dates, names)
+        self.assertEqual((self.rel(w), w["event"]),
+                         ("2026/02 practice/2026-11-07_after_NHALT_Battle-of-the-Bay/2026-11-14", None))
+        between = LogInfo("practice", when="2026-10-27T18:00:00")
+        self.assertEqual(self.rel(self.a.place(between, "x.wpilog", dates)),
+                         "2026/02 practice/2026-10-24_after_NHMAN/2026-10-27")
+        early = LogInfo("practice", when="2026-02-14T18:00:00")
+        self.assertEqual(self.rel(self.a.place(early, "x.wpilog", dates)),
+                         "2026/02 practice/2026-01-01_build-season/2026-02-14")
         # No event code at all, but on an event day: it goes with that event.
         floor = LogInfo("practice", when="2026-10-24T10:00:00")
-        self.assertEqual(self.rel(self.a.place(floor, "x.wpilog", dates)), "2026 Logs/2026-10-24_NHMAN/practice")
+        self.assertEqual(self.rel(self.a.place(floor, "x.wpilog", dates)), "2026/01 events/2026-10-24_NHMAN")
         # An FMS match whose log lost its event name is placed by its date.
         e16 = LogInfo("match", match="E16", when="2026-10-24T17:46:00")
         self.assertEqual(self.a.place(e16, "x.wpilog", dates)["event"], "NHMAN")
         boot = LogInfo("boot", when="2026-11-14T18:00:00")
-        self.assertEqual(self.rel(self.a.place(boot, "x.wpilog", dates)), "2026 Logs/practice/2026-11-14/boot")
-        self.assertTrue(self.rel(self.a.place(LogInfo("boot"), "x.wpilog", dates)).endswith("Logs/undated/boot"))
+        self.assertTrue(self.rel(self.a.place(boot, "x.wpilog", dates)).endswith("/2026-11-14/boot"))
+        self.assertTrue(self.rel(self.a.place(LogInfo("boot"), "x.wpilog", dates)).endswith(
+            "02 practice/undated/boot"))
         hoot = LogInfo("hoot", event="NHALT", match="E7", when="2026-11-07T15:54:00")
         self.assertEqual(self.rel(self.a.place(hoot, "NHALT_E7/rio.hoot", dates, names)),
-                         "2026 Logs/2026-11-07_NHALT_Battle-of-the-Bay/hoot/NHALT_E7")
+                         "2026/01 events/2026-11-07_NHALT_Battle-of-the-Bay/hoot")
+        # Next season starts its own build-season group, not "after" last fall's event.
+        jan = LogInfo("practice", when="2027-01-20T18:00:00")
+        self.assertEqual(self.rel(self.a.place(jan, "x.wpilog", dates)),
+                         "2027/02 practice/2027-01-01_build-season/2027-01-20")
 
-    def test_reuses_an_existing_event_folder(self):
-        os.makedirs(os.path.join(self.season, "2026-10-24_NHMAN_RiverRage"))
-        os.makedirs(os.path.join(self.season, "Newton Logs"))
-        os.makedirs(os.path.join(self.season, "2026-10-10_MABIL1x"))      # a different code
-        dates = {"NHMAN": ["2026-10-24"], "NEWTON": ["2026-04-30"], "MABIL1": ["2026-10-10"]}
-        for code, want in (("NHMAN", "2026-10-24_NHMAN_RiverRage"), ("NEWTON", "Newton Logs"),
-                           ("MABIL1", "2026-10-10_MABIL1")):
-            i = LogInfo("match", event=code, match="Q1", when=dates[code][0] + "T10:00:00")
-            self.assertEqual(os.path.basename(self.a.place(i, "x.wpilog", dates)["dir"]), want)
+    def test_existing_event_folders(self):
+        for d in ("2026-04-29_NEWTON_FIRST-Championship", "2026-10-24_NHMAN_RiverRage", "2026-10-10_MABIL1"):
+            os.makedirs(os.path.join(self.events, d, "hoot"))
+        dates = {"NEWTON": ["2026-04-30"], "NHMAN": ["2026-10-24"]}
+        q = LogInfo("match", event="NEWTON", match="Q23", when="2026-04-30T12:15:00")
+        self.assertEqual(os.path.basename(self.a.place(q, "x.wpilog", dates)["dir"]),
+                         "2026-04-29_NEWTON_FIRST-Championship")
+        # The folder's date starts the event: practice on the day before the first match goes with it.
+        thu = LogInfo("practice", when="2026-04-29T15:00:00")
+        self.assertEqual(self.a.place(thu, "x.wpilog", dates)["event"], "NEWTON")
+        # A folder alone (no match logs indexed) still marks the event and names the group after it.
+        after = LogInfo("practice", when="2026-10-14T18:00:00")
+        self.assertEqual(self.rel(self.a.place(after, "x.wpilog", dates)),
+                         "2026/02 practice/2026-10-10_after_MABIL1/2026-10-14")
+        may = LogInfo("practice", when="2026-05-11T18:00:00")
+        self.assertEqual(self.rel(self.a.place(may, "x.wpilog", dates)),
+                         "2026/02 practice/2026-04-29_after_NEWTON_FIRST-Championship/2026-05-11")
+
+    def test_regroup_existing_practice_days(self):
+        os.makedirs(os.path.join(self.events, "2026-04-29_NEWTON_FIRST-Championship"))
+        os.makedirs(os.path.join(self.events, "2026-05-30_MANOR_MA-State-Championship"))
+        for d in ("2026-04-20", "2026-05-11", "2026-06-01"):
+            os.makedirs(os.path.join(self.practice, d, "hoot"))
+            with open(os.path.join(self.practice, d, f"akit_{d}.wpilog"), "wb") as f:
+                f.write(b"x")
+        self.a.seed()
+        plan = self.a.regroup_plan()
+        got = [(os.path.basename(s), os.path.relpath(d, self.practice).replace(os.sep, "/")) for s, d in plan]
+        self.assertEqual(got, [("2026-04-20", "2026-01-01_build-season/2026-04-20"),
+                               ("2026-05-11", "2026-04-29_after_NEWTON_FIRST-Championship/2026-05-11"),
+                               ("2026-06-01", "2026-05-30_after_MANOR_MA-State-Championship/2026-06-01")])
+        self.assertEqual(self.a.regroup(plan), [])
+        self.assertEqual(self.a.regroup_plan(), [])
+        moved = os.path.join(self.practice, "2026-04-29_after_NEWTON_FIRST-Championship", "2026-05-11")
+        self.assertTrue(os.path.isfile(os.path.join(moved, "akit_2026-05-11.wpilog")))
+        paths = sorted(e["path"] for e in Archive(self.dir).files.values())
+        self.assertIn("2026/02 practice/2026-04-29_after_NEWTON_FIRST-Championship/2026-05-11/akit_2026-05-11.wpilog",
+                      paths)
+        self.assertTrue(all(os.path.exists(os.path.join(self.dir, p)) for p in paths))
 
     def test_event_dates(self):
         infos = [LogInfo("match", event="A", when="2026-03-01T10:00:00"),
@@ -191,7 +234,8 @@ class FetchTest(unittest.TestCase):
         write_log(os.path.join(self.logs, self.q2), start_utc=day, event="NHALT", match_type=2, number=2,
                   fms=True, enabled_s=150)
         t = day + dt.timedelta(hours=1)
-        write_log(os.path.join(self.logs, akit_name(t, "nhalt")), start_utc=t, event="NHALT", enabled_s=40)
+        self.prac = akit_name(t, "nhalt")
+        write_log(os.path.join(self.logs, self.prac), start_utc=t, event="NHALT", enabled_s=40)
         t = day + dt.timedelta(hours=2)
         write_log(os.path.join(self.logs, akit_name(t, "nhalt")), start_utc=t, event="NHALT")
         shop = at_local(2026, 11, 14, 17)
@@ -227,12 +271,14 @@ class FetchTest(unittest.TestCase):
         self.assertEqual(res.listed, 6)                              # notes.txt isn't a log
         self.assertEqual({k: res.count(k) for k in ("match", "practice", "boot", "hoot")},
                          {"match": 2, "practice": 2, "boot": 1, "hoot": 1})
-        ev_dir = os.path.join(self.archive_dir, "2026 Logs", "2026-11-07_NHALT_Battle-of-the-Bay")
-        self.assertTrue(os.path.isfile(os.path.join(ev_dir, self.q2)))
-        self.assertEqual(len(os.listdir(os.path.join(ev_dir, "practice"))), 1)
+        ev_dir = os.path.join(self.archive_dir, "2026", "01 events", "2026-11-07_NHALT_Battle-of-the-Bay")
+        self.assertEqual(sorted(os.listdir(ev_dir)),
+                         sorted([self.q2, self.prac, "boot", "hoot"]))      # practice at the event sits with it
         self.assertEqual(len(os.listdir(os.path.join(ev_dir, "boot"))), 1)
-        self.assertTrue(os.path.isfile(os.path.join(ev_dir, "hoot", "NHALT_Q2", self.hoot)))
-        self.assertEqual(len(os.listdir(os.path.join(self.archive_dir, "2026 Logs", "practice", "2026-11-14"))), 1)
+        self.assertTrue(os.path.isfile(os.path.join(ev_dir, "hoot", self.hoot)))
+        shop = os.path.join(self.archive_dir, "2026", "02 practice", "2026-11-07_after_NHALT_Battle-of-the-Bay",
+                            "2026-11-14")
+        self.assertEqual(len(os.listdir(shop)), 1)
         # The Pitwall event got its match log and the practice log from its day, nothing else.
         self.assertEqual(sorted(res.handed[eid]), ["Q2", "practice"])
         self.assertEqual(len(self.store.event_logs(eid)), 2)
@@ -255,7 +301,7 @@ class FetchTest(unittest.TestCase):
         self.assertEqual(copies, [])
 
     def test_seeding_skips_logs_already_in_the_archive(self):
-        dest = os.path.join(self.archive_dir, "2026 Logs", "2026-11-07_NHALT_BOB")
+        dest = os.path.join(self.archive_dir, "2026", "01 events", "2026-11-07_NHALT_BOB")
         os.makedirs(dest)
         shutil.copy2(os.path.join(self.logs, self.q2), dest)
         archive = Archive(self.archive_dir)
@@ -264,7 +310,7 @@ class FetchTest(unittest.TestCase):
         res = fetch(LocalSource(self.stick), archive, settle_s=0)
         self.assertEqual(res.already, 1)
         self.assertNotIn(self.q2, [f.name for f in res.fetched])
-        self.assertEqual(len(os.listdir(dest)), 4)       # Q2 + practice/ + boot/ + hoot/ in the reused folder
+        self.assertEqual(len(os.listdir(dest)), 4)       # Q2 + the practice log + boot/ + hoot/, in the reused folder
 
     def test_a_log_still_being_written_is_left(self):
         res = fetch(LocalSource(self.stick), Archive(self.archive_dir), settle_s=0)

@@ -126,10 +126,11 @@ def fetch(source: Source, archive: Archive, store: Any = None, progress: Optiona
 
     dates = known_event_dates(archive, [s[3] for s in staged])
     names, by_code = _pitwall_events(store)
+    events = archive.events(dates, names)
     try:
         for i, (f, tmp, sha, info) in enumerate(staged):
             say("file", i, len(staged), f.rel)
-            where = archive.place(info, f.rel, dates, names)
+            where = archive.place(info, f.rel, dates, names, events)
             folder = where["dir"]
             os.makedirs(folder, exist_ok=True)
             dup = False
