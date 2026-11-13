@@ -66,6 +66,9 @@ command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q "$D
 
 echo "Pitwall $("$BIN/pitwall" --version | cut -d' ' -f2) installed."
 echo "  Open it from the app menu (search for Pitwall), or run: pitwall app"
+if ! "$PY" -c 'import paramiko' >/dev/null 2>&1; then
+    echo "  To fetch logs straight from the robot, also install paramiko: sudo apt install python3-paramiko"
+fi
 case ":$PATH:" in
     *":$BIN:"*) ;;
     *) echo "  Note: $BIN isn't on your PATH yet; log out and back in, or use $BIN/pitwall" ;;

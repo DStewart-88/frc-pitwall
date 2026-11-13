@@ -77,8 +77,12 @@ def stamp_from_name(name: str) -> Optional[str]:
         return None
 
 
+def _series(log: WPILog, key: str):
+    return log.series(key) if log.has(key) else ([], [])
+
+
 def _enabled_seconds(log: WPILog) -> float:
-    t, v = log.series("/DriverStation/Enabled")
+    t, v = _series(log, "/DriverStation/Enabled")
     total, on = 0.0, None
     for ti, vi in zip(t, v):
         if vi and on is None:
@@ -93,8 +97,8 @@ def _enabled_seconds(log: WPILog) -> float:
 
 def _clock_start(log: WPILog) -> Optional[str]:
     """Local time when the log's clock first reads valid, stepped back to the log's start."""
-    tv, vv = log.series("/SystemStats/SystemTimeValid")
-    te, ve = log.series("/SystemStats/EpochTimeMicros")
+    tv, vv = _series(log, "/SystemStats/SystemTimeValid")
+    te, ve = _series(log, "/SystemStats/EpochTimeMicros")
     if not te:
         return None
     t_valid = next((a for a, b in zip(tv, vv) if b), None)
@@ -121,7 +125,7 @@ def identify_wpilog(path: str, name: str = "") -> LogInfo:
     event = (log.last_value("/DriverStation/EventName", "") or "").strip().upper()
     mt = MATCH_TYPES.get(int(log.last_value("/DriverStation/MatchType", 0) or 0), "")
     mn = int(log.last_value("/DriverStation/MatchNumber", 0) or 0)
-    _, fms_v = log.series("/DriverStation/FMSAttached")
+    _, fms_v = _series(log, "/DriverStation/FMSAttached")
     enabled = _enabled_seconds(log)
     when, src = _clock_start(log), "log clock"
     if when is None:

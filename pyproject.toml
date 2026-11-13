@@ -4,12 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pitwall"
-version = "0.4.0"
+version = "0.7.0"
 description = "FRC robot logs in, team-readable reports out"
 readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.11"
 dependencies = []
+
+[project.optional-dependencies]
+robot = ["paramiko>=3"]          # fetching logs from the robot over SFTP
 
 [project.scripts]
 pitwall = "pitwall.cli:main"
