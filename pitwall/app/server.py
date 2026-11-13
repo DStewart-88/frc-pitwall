@@ -10,6 +10,7 @@ import io
 import json
 import mimetypes
 import os
+import re
 import threading
 import time
 import urllib.request
@@ -43,7 +44,7 @@ class App:
         self.worker = Worker(self.store, cache_dir if cache_dir is not None else default_dir(), jobs, poll_s)
         self.httpd: Optional[ThreadingHTTPServer] = None
         self.build = build_id()
-        self.robot = RobotWatch(self.store)
+        self.robot = RobotWatch(self.store, on_logs=self.worker.request_build)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -227,7 +228,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self.error_json("No such event.", 404)
                 eid, action = ev["id"], parts[3]
                 if action == "settings":
-                    changes = {k: body[k] for k in ("name", "profile", "compare", "watch", "include", "exclude") if k in body}
+                    changes = {k: body[k] for k in ("name", "profile", "compare", "watch", "include", "exclude",
+                                                    "start", "end") if k in body}
+                    for k in ("start", "end"):
+                        if changes.get(k) and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", changes[k]):
+                            return self.error_json("Dates are year-month-day, like 2026-11-07.")
+                    a_, b_ = changes.get("start", ev.get("start")), changes.get("end", ev.get("end"))
+                    if a_ and b_ and a_ > b_:
+                        return self.error_json("The event's first day is after its last day.")
                     s.save_event(eid, changes)
                     a.worker.request_build(eid)
                     return self.json({"ok": True})
@@ -253,6 +261,10 @@ class Handler(BaseHTTPRequestHandler):
                 folder = body.get("folder")
                 a.robot.request_fetch(os.path.abspath(folder) if folder else None)
                 return self.json({"ok": True})
+            if parts == ["api", "robot", "new-code"]:
+                r = a.robot.answer_code(body.get("code", ""), body.get("action", ""), body.get("name", ""),
+                                        body.get("profile", ""), body.get("event", ""))
+                return self.json(r)
             if parts == ["api", "robot", "settings"]:
                 changes = {}
                 if "archive" in body:
@@ -269,6 +281,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self.error_json("That isn't a team number.")
                     changes["team"] = team
                 s.save_settings(changes)
+                if "archive" in changes:
+                    a.robot.refresh_codes()
                 a.robot._wake.set()
                 return self.json(a.robot.get_status())
             if parts == ["api", "profiles"]:

@@ -18,6 +18,8 @@ import traceback
 from typing import Any, Callable, Dict, Optional
 
 from ..fetch import Archive, LocalSource, fetch, summary_lines
+from ..fetch.archive import EVENT_DIR, unclaimed_codes
+from ..fetch.fetch import claim_code
 from ..fetch.robot import Robot, RobotError, SftpSource, find_robot, have_sftp, install_hint
 from .store import Store
 
@@ -30,8 +32,10 @@ DEFAULT_TEAM = 88
 
 class RobotWatch:
     def __init__(self, store: Store, finder: Callable[..., Optional[Robot]] = find_robot,
-                 presence_s: float = PRESENCE_S, list_s: float = LIST_S):
+                 presence_s: float = PRESENCE_S, list_s: float = LIST_S,
+                 on_logs: Optional[Callable[[str], None]] = None):
         self.store = store
+        self.on_logs = on_logs or (lambda eid: None)     # an event's logs changed: rebuild it
         self.finder = finder
         self.presence_s = presence_s
         self.list_s = list_s
@@ -46,7 +50,9 @@ class RobotWatch:
         self.status: Dict[str, Any] = {
             "sftp": have_sftp(), "install_hint": install_hint(), "connected": False, "robot": None,
             "stick": None, "waiting": None, "fetching": False, "progress": None, "last": None,
-            "waiting_bytes": None, "error": None, "clear_at": CLEAR_AT, "auto_max": AUTO_MAX}
+            "waiting_bytes": None, "error": None, "clear_at": CLEAR_AT, "auto_max": AUTO_MAX,
+            "new_codes": []}
+        self._codes_checked = False
 
     # ------------------------------------------------------------ settings
 
@@ -56,10 +62,70 @@ class RobotWatch:
                 "auto_fetch": bool(s.get("auto_fetch", True))}
 
     def get_status(self) -> Dict[str, Any]:
+        if not self._codes_checked:
+            self.refresh_codes()
         with self._lock:
             out = dict(self.status)
         out.update(self.settings())
+        if out["new_codes"]:            # what the "new event code" prompt needs to offer
+            out["profiles"] = [{"id": p["id"], "name": p["name"]} for p in self.store.list_profiles() if not p["error"]]
+            out["events"] = [{"id": e["id"], "name": e["name"] or e["id"], "profile": e["profile"]}
+                             for e in self.store.list_events()]
         return out
+
+    # ------------------------------------------------------------ new event codes
+
+    def refresh_codes(self) -> None:
+        """Note the event codes with match logs in the archive that no Pitwall event takes."""
+        self._codes_checked = True
+        cfg = self.settings()
+        if not cfg["archive"] or not os.path.isdir(cfg["archive"]):
+            self._set(new_codes=[])
+            return
+        claimed = [c for e in self.store.list_events() for c in self.store.event_codes(e["id"])]
+        ignored = self.store.settings().get("ignored_codes") or []
+        found = unclaimed_codes(Archive(cfg["archive"]), claimed, ignored)
+        for f in found:
+            m = EVENT_DIR.match(os.path.basename(f["folder"])) if f["folder"] else None
+            f["name"] = m.group(3).replace("-", " ") if m and m.group(3) else f["code"]
+        self._set(new_codes=found)
+
+    def answer_code(self, code: str, action: str, name: str = "", profile: str = "", event: str = "") -> Dict[str, Any]:
+        """What to do with a new event code: "create" an event for it, "add" its logs to `event`,
+        or "ignore" it (not an event, such as a scrimmage). Returns {"event": id, "copied": n}."""
+        code = code.strip().upper()
+        cfg = self.settings()
+        if not code:
+            raise ValueError("No event code given.")
+        if action == "ignore":
+            ign = list(self.store.settings().get("ignored_codes") or [])
+            if code not in ign:
+                self.store.save_settings({"ignored_codes": ign + [code]})
+            self.refresh_codes()
+            return {"event": None, "copied": 0}
+        if not cfg["archive"]:
+            raise ValueError("Choose the log archive folder first.")
+        info = next((c for c in self.status["new_codes"] if c["code"] == code), {})
+        if action == "create":
+            if not profile:
+                raise ValueError("Pick the robot for this event.")
+            eid = self.store.create_event(name.strip() or info.get("name") or code, profile, [], watch=False)
+            self.store.save_event(eid, {"code": code, "start": info.get("first", ""), "end": info.get("last", "")})
+        elif action == "add":
+            ev = self.store.get_event(event)
+            if not ev:
+                raise ValueError("Pick the event to add these logs to.")
+            eid = ev["id"]
+            if self.store.event_code(eid):
+                self.store.save_event(eid, {"codes": list(dict.fromkeys((ev.get("codes") or []) + [code]))})
+            else:
+                self.store.save_event(eid, {"code": code})
+        else:
+            raise ValueError(f"Unknown choice {action!r}.")
+        copied = claim_code(Archive(cfg["archive"]), self.store, eid, code)
+        self.on_logs(eid)
+        self.refresh_codes()
+        return {"event": eid, "copied": copied}
 
     def _set(self, **kw) -> None:
         with self._lock:
@@ -167,6 +233,7 @@ class RobotWatch:
                 self._set(error=f"Fetch stopped: {e}")
             finally:
                 self._set(fetching=False, progress=None)
+                self.refresh_codes()
 
 
 def archive_ok(path: str) -> Optional[str]:

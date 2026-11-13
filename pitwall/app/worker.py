@@ -250,11 +250,16 @@ class Worker:
         if not groups:
             self._set(eid, state="waiting", detail="No match logs with motor current yet", error=None)
             return
-        code = max(groups, key=lambda c: len(groups[c]["matches"]))
-        g = groups[code]
+        mine = [c for c in self.store.event_codes(eid) if c in groups]
+        code = mine[0] if mine else max(groups, key=lambda c: len(groups[c]["matches"]))
+        g = {"matches": list(groups[code]["matches"]), "other": list(groups[code]["other"])}
         sk = skipped.get(code, []) + [{"file": e["file"], "reason": "couldn't be read: " + e["reason"]} for e in errors]
+        for extra in mine[1:]:                     # codes added to this event by hand
+            g["matches"] += groups[extra]["matches"]
+            g["other"] += groups[extra]["other"]
+            sk += skipped.get(extra, [])
         for other, og in groups.items():
-            if other != code:
+            if other != code and other not in mine:
                 sk += [{"file": p["source"]["file"], "reason": f"from another event ({other})"} for p in og["matches"]]
         self._set(eid, state="building", detail="Writing the report")
         ev = make_event(code, g, profile, name=ev_cfg["name"] or None, include=ev_cfg["include"],

@@ -125,8 +125,8 @@ def fetch(source: Source, archive: Archive, store: Any = None, progress: Optiona
     say("copy", len(new), len(new), "")
 
     dates = known_event_dates(archive, [s[3] for s in staged])
-    names, by_code = _pitwall_events(store)
-    events = archive.events(dates, names)
+    names, by_code, spans = _pitwall_events(store)
+    events = archive.events(dates, names, spans)
     try:
         for i, (f, tmp, sha, info) in enumerate(staged):
             say("file", i, len(staged), f.rel)
@@ -171,18 +171,40 @@ def fetch(source: Source, archive: Archive, store: Any = None, progress: Optiona
     return res
 
 
-def _pitwall_events(store: Any) -> Tuple[Dict[str, str], Dict[str, str]]:
-    """({event code: event name}, {event code: Pitwall event id}) from the app's events."""
+def _pitwall_events(store: Any) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, Tuple[str, str]]]:
+    """({event code: event name}, {event code: Pitwall event id}, {event code: (start, end) set
+    on the event}) from the app's events."""
     if store is None:
-        return {}, {}
-    names, ids = {}, {}
+        return {}, {}, {}
+    names, ids, spans = {}, {}, {}
     for ev in store.list_events():
-        code = store.event_code(ev["id"])
-        if code and code not in ids:
+        for k, code in enumerate(store.event_codes(ev["id"])):
+            if code in ids:
+                continue
             ids[code] = ev["id"]
-            if ev.get("name"):
+            if ev.get("name") and k == 0:
                 names[code] = ev["name"]
-    return names, ids
+            if ev.get("start") or ev.get("end"):
+                spans[code] = (ev.get("start") or "", ev.get("end") or "")
+    return names, ids, spans
+
+
+def claim_code(archive: Archive, store: Any, eid: str, code: str) -> int:
+    """Give the Pitwall event `eid` the logs the archive already has for `code` (match logs, and
+    practice from its days). Returns how many were copied in."""
+    from .archive import event_logs_in_archive
+    ev = store.get_event(eid) or {}
+    span = (ev.get("start") or "", ev.get("end") or "") if (ev.get("start") or ev.get("end")) else None
+    dst_dir = store.logs_dir(eid)
+    os.makedirs(dst_dir, exist_ok=True)
+    n = 0
+    for src in event_logs_in_archive(archive, code, span):
+        dst = os.path.join(dst_dir, os.path.basename(src))
+        if os.path.exists(dst) and os.path.getsize(dst) == os.path.getsize(src):
+            continue
+        _copy_atomic(src, dst)
+        n += 1
+    return n
 
 
 def summary_lines(res: FetchResult) -> List[str]:
