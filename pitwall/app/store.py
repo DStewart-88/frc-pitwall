@@ -60,6 +60,8 @@ EVENT_DEFAULTS = {
     "name": "", "profile": "", "sources": [], "watch": True,
     "include": [], "exclude": [], "compare": "auto", "created": 0.0,
     "code": "",          # the FMS event code its match logs carry, once known
+    "codes": [],         # other event codes whose logs belong here too (added by hand)
+    "start": "", "end": "",   # the event's dates (YYYY-MM-DD), when set: they place practice logs
 }
 
 
@@ -200,6 +202,12 @@ class Store:
             return ev["code"].strip().upper()
         summary = _read_json(os.path.join(self.report_dir(eid), "event.json"), None) or {}
         return (summary.get("code") or "").strip().upper()
+
+    def event_codes(self, eid: str) -> List[str]:
+        """Every event code whose logs belong to this event: its own first."""
+        ev = self.get_event(eid) or {}
+        out = [c for c in [self.event_code(eid)] + [x.strip().upper() for x in ev.get("codes") or []] if c]
+        return list(dict.fromkeys(out))
 
     def event_logs(self, eid: str) -> List[str]:
         d = self.logs_dir(eid)

@@ -171,7 +171,13 @@ FRC Logs/                                      <- give this folder to --archive
 - A log that's still being written (its size changes between two looks) is left for next time.
 - Match logs go to the Pitwall event with the same event code (an event learns its code from
   its first report). Match logs for an event code Pitwall doesn't have yet stay in the archive,
-  and the fetch says so.
+  and the app's Robot panel asks once what to do with them: make an event for them (it gets
+  every log the archive already has for that code), add them to an existing event (when the
+  Driver Station had a different event name, say), or "not an event" (a scrimmage), which stops
+  the question.
+- An event's dates can be set in its settings. Practice logs from those days go with the event,
+  such as the practice day before the first match; without dates, an event runs from its first
+  to its last match.
 - `--regroup-practice` is a one-time tidy-up for practice day folders sitting straight in
   `02 practice`: it lists where each would go, and moves them when run again with `--yes`.
 

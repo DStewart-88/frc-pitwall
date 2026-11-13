@@ -141,9 +141,11 @@ class Archive:
         except OSError:
             return []
 
-    def events(self, dates: Dict[str, List[str]], names: Optional[Dict[str, str]] = None) -> Dict[str, Event]:
-        """Every event the archive knows: its folders in 01 events, and the days of its FMS
-        match logs. An event runs from its folder's date (or first match day) to its last match day."""
+    def events(self, dates: Dict[str, List[str]], names: Optional[Dict[str, str]] = None,
+               spans: Optional[Dict[str, Tuple[str, str]]] = None) -> Dict[str, Event]:
+        """Every event the archive knows: its folders in 01 events, the days of its FMS match logs,
+        and dates set on the Pitwall event (`spans`). An event runs from its folder's date (or
+        first match day) to its last match day, widened to any dates set by hand."""
         names = names or {}
         out: Dict[str, Event] = {}
         for season in self.seasons():
@@ -166,6 +168,15 @@ class Archive:
                 out[code] = Event(code, ds[0], ds[-1], None)
             else:
                 ev.start, ev.end = min(ev.start, ds[0]), max(ev.end, ds[-1])
+        for code, (a, b) in (spans or {}).items():
+            a, b = a or b, b or a
+            if not a:
+                continue
+            ev = out.get(code)
+            if ev is None:
+                out[code] = Event(code, a, b, None)
+            else:
+                ev.start, ev.end = min(ev.start, a), max(ev.end, b)
         for code, ev in out.items():
             if ev.folder is None:
                 label = f"{ev.start}_{code}"
@@ -256,3 +267,48 @@ class Archive:
 
 def known_event_dates(archive: Archive, more: Iterable[LogInfo] = ()) -> Dict[str, List[str]]:
     return event_dates(list(archive.infos()) + list(more))
+
+
+def unclaimed_codes(archive: Archive, claimed: Iterable[str], ignored: Iterable[str] = ()) -> List[Dict[str, Any]]:
+    """Event codes with FMS match logs in the archive that no Pitwall event takes:
+    [{"code", "matches", "first", "last", "folder"}], newest first."""
+    skip = {c.upper() for c in claimed} | {c.upper() for c in ignored}
+    found: Dict[str, Dict[str, Any]] = {}
+    for e in archive.files.values():
+        info = LogInfo.from_dict(e.get("info") or {"kind": "other"})
+        if info.kind != "match" or not info.event or info.event in skip:
+            continue
+        d = found.setdefault(info.event, {"code": info.event, "matches": set(), "days": set()})
+        d["matches"].add(info.match)
+        if info.date:
+            d["days"].add(info.date)
+    evs = archive.events(known_event_dates(archive))
+    out = []
+    for code, d in found.items():
+        days = sorted(d["days"])
+        folder = evs[code].folder if code in evs else None
+        out.append({"code": code, "matches": len(d["matches"]), "first": days[0] if days else "",
+                    "last": days[-1] if days else "",
+                    "folder": os.path.relpath(folder, archive.root).replace(os.sep, "/") if folder else ""})
+    return sorted(out, key=lambda x: x["first"], reverse=True)
+
+
+def event_logs_in_archive(archive: Archive, code: str, span: Optional[Tuple[str, str]] = None) -> List[str]:
+    """Archive paths of the logs that belong to the Pitwall event for `code`: its match logs, and
+    practice logs from its days."""
+    dates = known_event_dates(archive)
+    evs = archive.events(dates, spans={code: span} if span else None)
+    ev = evs.get(code)
+    out = []
+    for e in archive.files.values():
+        info = LogInfo.from_dict(e.get("info") or {"kind": "other"})
+        path = os.path.join(archive.root, *e["path"].split("/"))
+        if not e["name"].lower().endswith(".wpilog") or not os.path.isfile(path):
+            continue
+        if info.kind == "match" and info.event == code:
+            out.append(path)
+        elif info.kind == "match" and not info.event and ev and info.date and ev.start <= info.date <= ev.end:
+            out.append(path)
+        elif info.kind == "practice" and ev and info.date and ev.start <= info.date <= ev.end:
+            out.append(path)
+    return sorted(out)

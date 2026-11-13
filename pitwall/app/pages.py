@@ -39,6 +39,9 @@ input[type=text],select{width:100%;max-width:560px;min-height:42px;padding:6px 1
 .robot .warn{color:#8a5a00;font-weight:bold}.robot .err{color:#bd1314}
 .robot .rb-result{margin-top:12px;padding:10px 14px;background:#f5f7fa;border-radius:6px;font-size:14px}
 .robot .rb-result ul{margin:6px 0 0;padding-left:18px}
+.robot .rb-new{margin-top:12px;padding:12px 14px;border:1px solid #f0c36d;background:#fff8e6;border-radius:6px;font-size:14px}
+.robot .rb-new-row{margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.robot .rb-new input,.robot .rb-new select{width:auto;max-width:300px;display:inline-block;margin:0;padding:6px 8px;font:14px Arial,sans-serif}
 .robot .rb-foot{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:14px;font-size:13px}
 .picker{border:1px solid var(--line);border-radius:6px;overflow:hidden;max-width:820px}
 .picker .places{display:flex;flex-wrap:wrap;gap:8px;padding:12px;background:#f5f7fa;border-bottom:1px solid var(--line)}
@@ -192,6 +195,7 @@ ROBOT_PANEL = r"""<section class="card robot" id="robot"><div class="row" style=
 <div class="rb-btns"><button class="btn primary" id="rb-get" disabled>Get logs</button>
 <button class="btn" id="rb-stick">From a USB stick…</button></div></div>
 <div id="rb-last"></div>
+<div id="rb-new"></div>
 <div class="rb-foot meta"><label><input type="checkbox" id="rb-auto"> Fetch new logs by itself when the robot
 is tethered (USB or Ethernet, never over the radio)</label>
 <span>Archive: <span id="rb-arch"></span> <a href="#" id="rb-arch-change">Change</a></span></div>
@@ -234,12 +238,35 @@ function render(r){RB=r;var h='',L='';
     (last.handed||[]).forEach(function(e){X+='<li>'+escHtml(e.labels.join(', '))+' added to <a href="/events/'+
       encodeURIComponent(e.id)+'/">'+escHtml(e.name)+'</a></li>';});
     Object.keys(last.no_event||{}).forEach(function(c){X+='<li>'+last.no_event[c]+' '+escHtml(c)+
-      ' match log(s) are in the archive, but no event here has code '+escHtml(c)+'. <a href="/events/new">Make one</a></li>';});
+      ' match log(s) are in the archive, but no event here has code '+escHtml(c)+' yet</li>';});
     X+='<li>'+escHtml(last.lines[0])+'</li>';
     if(last.growing&&last.growing.length)X+='<li>Left for next time (still being written): '+escHtml(last.growing.join(', '))+'</li>';
     if(last.errors)X+='<li class="err">'+last.errors+' file(s) couldn\'t be copied: see below</li>';
     X+='</ul></div>';}
   el('rb-last').innerHTML=X;
+  renderNew(r);
+}
+var newKey='';
+function day(d){if(!d)return '';var p=d.split('-');return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+p[1]-1]+' '+(+p[2]);}
+function renderNew(r){var list=r.new_codes||[],key=JSON.stringify(list)+JSON.stringify((r.events||[]).map(function(e){return e.id;}));
+  if(key===newKey)return;newKey=key;var box=el('rb-new');box.innerHTML='';
+  list.forEach(function(c){var d=document.createElement('div');d.className='rb-new';
+    var when=c.first?(c.first===c.last?day(c.first):day(c.first)+' to '+day(c.last)):'';
+    var popts=(r.profiles||[]).map(function(p){return '<option value="'+escHtml(p.id)+'">'+escHtml(p.name)+'</option>';}).join('');
+    var eopts=(r.events||[]).map(function(e){return '<option value="'+escHtml(e.id)+'">'+escHtml(e.name)+'</option>';}).join('');
+    d.innerHTML='<b>New event code '+escHtml(c.code)+'</b>: '+c.matches+' match'+(c.matches===1?'':'es')+(when?' on '+when:'')+
+      ' in the archive, not in any event here.'+
+      '<div class="rb-new-row">Name <input type="text" class="nm" value="'+escHtml(c.name)+'">'+
+      ((r.profiles||[]).length>1?' Robot <select class="pf">'+popts+'</select>':'<select class="pf" style="display:none">'+popts+'</select>')+
+      ' <button class="btn primary small mk">Make this event</button></div>'+
+      (eopts?'<div class="rb-new-row">or add them to <select class="ev">'+eopts+'</select> <button class="btn small ad">Add</button></div>':'')+
+      '<div class="rb-new-row"><a href="#" class="ig">Not an event (a scrimmage, say): don\'t ask again</a></div>';
+    function send(body){body.code=c.code;api('POST','/api/robot/new-code',body).then(function(res){msg('');newKey='';
+      if(res.event)location.href='/events/'+encodeURIComponent(res.event)+'/';else poll();}).catch(function(e){msg(e.message);});}
+    d.querySelector('.mk').onclick=function(){send({action:'create',name:d.querySelector('.nm').value,profile:d.querySelector('.pf').value});};
+    if(d.querySelector('.ad'))d.querySelector('.ad').onclick=function(){send({action:'add',event:d.querySelector('.ev').value});};
+    d.querySelector('.ig').onclick=function(e){e.preventDefault();send({action:'ignore'});};
+    box.appendChild(d);});
 }
 function msg(t){el('rb-msg').innerHTML=t?'<div class="msg err">'+escHtml(t)+'</div>':'';}
 function poll(){api('GET','/api/robot').then(render).catch(function(){});}
@@ -339,10 +366,14 @@ def inject(report_html: str, toolbar: str, token: str) -> str:
 
 
 def waiting_page(ev: Dict[str, Any], st: Dict[str, Any], logs_dir: str, token: str) -> str:
-    srcs = "".join(f"<li>{esc(s)}</li>" for s in ev["sources"]) or "<li>No folder chosen yet</li>"
+    srcs = "".join(f"<li>{esc(s)}</li>" for s in ev["sources"])
+    code = ev.get("code") or ""
+    where = (f'<p>Watching:</p><ul class="plain" style="display:inline-block;text-align:left">{srcs}</ul>' if srcs else
+             f'<p>Match logs{" for " + esc(code) if code else ""} arrive with <b>Get logs</b> in the Robot panel '
+             f'on the <a href="/">home page</a>, or use Add logs above.</p>')
     body = f"""<section class="card empty"><h2>No report yet</h2>
 <p>Pitwall makes the report once it has at least one match log with motor current.</p>
-<p>Watching:</p><ul class="plain" style="display:inline-block;text-align:left">{srcs}</ul>
+{where}
 <p class="hint">Or copy logs straight into {esc(logs_dir)}</p></section>"""
     html = page(ev["name"] or "Event", body, token, "events")
     return inject(html, event_toolbar(ev, st, token, at_match=False), token)
@@ -370,6 +401,9 @@ def event_settings(ev: Dict[str, Any], summary: Optional[Dict[str, Any]], profil
                f"<tbody>{''.join(rows)}</tbody></table></div>") if rows else "<p class=\"muted\">No matches yet.</p>"
     auto_out = {m["label"] for m in (summary or {}).get("matches", [])
                 if m["why_not"] and m["why_not"] != "Excluded by hand" and not m.get("included_by_hand")}
+    codes = [c for c in [ev.get("code") or ""] + list(ev.get("codes") or []) if c]
+    codes_line = (f'Event code{"s" if len(codes) > 1 else ""}: {esc(", ".join(codes))}.' if codes else
+                  "The event code comes from its first match log.")
     srcs = "".join(
         f'<div>\U0001F4C1 <span style="flex:1">{esc(s)}</span><button class="btn small" data-rm="{esc(s)}">Stop watching</button></div>'
         for s in ev["sources"]) or '<p class="muted">None.</p>'
@@ -378,6 +412,11 @@ def event_settings(ev: Dict[str, Any], summary: Optional[Dict[str, Any]], profil
 <label class="f" for="name">Event name</label><input type="text" id="name" value="{esc(ev["name"])}">
 <label class="f" for="profile">Robot</label><select id="profile">{popts}</select>
 <label class="f" for="cmp">Compare with</label><select id="cmp">{copt_html}</select>
+<label class="f">Event dates</label>
+<div class="rb-new-row"><input type="date" id="start" value="{esc(ev.get("start") or "")}"> to
+<input type="date" id="end" value="{esc(ev.get("end") or "")}"></div>
+<p class="hint">Practice logs from these days are kept with the event. Without dates, it runs from its first to its last match.
+{codes_line}</p>
 <label class="toggle"><input type="checkbox" id="watch"{" checked" if ev["watch"] else ""}> Watch the folders below for new logs</label>
 <label class="f">Watched folders</label><div class="chosen">{srcs}</div>
 </section>
@@ -397,7 +436,7 @@ el('save').onclick=function(){{
   document.querySelectorAll('.cnt').forEach(function(c){{var l=c.dataset.label,auto=AUTO_OUT.indexOf(l)<0;
     if(c.checked&&!auto)inc.push(l); if(!c.checked&&auto)exc.push(l);}});
   api('POST','/api/events/{esc(ev["id"])}/settings',{{name:el('name').value,profile:el('profile').value,compare:el('cmp').value,
-    watch:el('watch').checked,include:inc,exclude:exc}}).then(function(){{location.href='/events/{esc(ev["id"])}/';}})
+    watch:el('watch').checked,include:inc,exclude:exc,start:el('start').value,end:el('end').value}}).then(function(){{location.href='/events/{esc(ev["id"])}/';}})
   .catch(function(e){{el('msg').innerHTML='<div class="msg err">'+escHtml(e.message)+'</div>';}});}};
 el('del').onclick=function(){{if(!confirm('Delete this event and its copied logs from this computer? The original logs are not touched.'))return;
   api('POST','/api/events/{esc(ev["id"])}/delete',{{}}).then(function(){{location.href='/';}});}};
