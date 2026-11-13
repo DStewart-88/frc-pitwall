@@ -125,6 +125,49 @@ def cmd_app(a) -> int:
     return 0
 
 
+def cmd_fetch(a) -> int:
+    from .app.store import Store
+    from .fetch import Archive, LocalSource, fetch, summary_lines
+    store = None if a.no_pitwall else Store(a.data_dir)
+    settings = store.settings() if store else {}
+    root = a.archive or settings.get("archive")
+    if not root:
+        print("Where is the team log archive? Give it once with --archive FOLDER "
+              "(Pitwall remembers it).", file=sys.stderr)
+        return 2
+    root = os.path.abspath(os.path.expanduser(root))
+    if store and a.archive:
+        store.save_settings({"archive": root})
+    archive = Archive(root)
+    if a.index_existing:
+        n = archive.seed()
+        print(f"{n} log file(s) already in {root} added to the index ({len(archive.files)} in all).")
+        if not a.source:
+            return 0
+    if not a.source:
+        print("Fetch from where? Give the stick or folder, e.g. pitwall fetch /media/$USER/ROBOT", file=sys.stderr)
+        return 2
+    last = [""]
+
+    def progress(stage: str, done: int, total: int, name: str) -> None:
+        if stage == "copy" and name and sys.stdout.isatty():
+            line = f"copying {done + 1}/{total}  {name}"
+            print("\r" + line[:100].ljust(len(last[0])), end="", flush=True)
+            last[0] = line[:100]
+        elif stage == "copy" and not name and last[0]:
+            print("\r" + " " * len(last[0]) + "\r", end="", flush=True)
+
+    try:
+        res = fetch(LocalSource(a.source), archive, store, progress)
+    except FileNotFoundError as e:
+        print(e, file=sys.stderr)
+        return 1
+    for line in summary_lines(res):
+        print(line)
+    print(f"archive: {root}")
+    return 1 if res.errors else 0
+
+
 def cmd_check(a) -> int:
     profile = load_profile(a.profile)
     log = WPILog(a.log)
@@ -185,6 +228,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap_.add_argument("--no-browser", action="store_true", help="don't open the browser")
     ap_.add_argument("-j", "--jobs", type=int, default=min(4, os.cpu_count() or 1), help="logs to analyze at once")
     ap_.set_defaults(fn=cmd_app)
+
+    f = sub.add_parser("fetch", help="copy new logs off the robot's USB stick into the archive and Pitwall events",
+                       description="Copy new logs from the robot's USB stick (or any folder) into the team log "
+                                   "archive, sorted by event and day, and add match logs to their Pitwall event. "
+                                   "Nothing on the stick is changed.")
+    f.add_argument("source", nargs="?", help="the stick (or its logs folder), or any folder of logs")
+    f.add_argument("--archive", help="the team log archive folder (remembered after the first time)")
+    f.add_argument("--index-existing", action="store_true",
+                   help="note the logs already in the archive, so a fetch doesn't copy them again")
+    f.add_argument("--data-dir", help="the Pitwall app's data folder (default: your user data folder)")
+    f.add_argument("--no-pitwall", action="store_true", help="only fill the archive; don't add logs to Pitwall events")
+    f.set_defaults(fn=cmd_fetch)
 
     c = sub.add_parser("check", help="check a profile against a log")
     c.add_argument("log")

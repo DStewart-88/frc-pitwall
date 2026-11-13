@@ -59,6 +59,7 @@ def _read_json(path: str, default: Any) -> Any:
 EVENT_DEFAULTS = {
     "name": "", "profile": "", "sources": [], "watch": True,
     "include": [], "exclude": [], "compare": "auto", "created": 0.0,
+    "code": "",          # the FMS event code its match logs carry, once known
 }
 
 
@@ -70,6 +71,18 @@ class Store:
         os.makedirs(self.profiles_dir, exist_ok=True)
         os.makedirs(self.events_dir, exist_ok=True)
         self.lock = threading.RLock()
+
+    # ------------------------------------------------------------ settings
+
+    def settings(self) -> Dict[str, Any]:
+        return _read_json(os.path.join(self.root, "settings.json"), {})
+
+    def save_settings(self, changes: Dict[str, Any]) -> Dict[str, Any]:
+        with self.lock:
+            cur = self.settings()
+            cur.update(changes)
+            _write_json(os.path.join(self.root, "settings.json"), cur)
+            return cur
 
     # ------------------------------------------------------------ profiles
 
@@ -179,6 +192,14 @@ class Store:
 
     def delete_event(self, eid: str) -> None:
         shutil.rmtree(self.event_dir(eid), ignore_errors=True)
+
+    def event_code(self, eid: str) -> str:
+        """The event code this event's match logs carry: from its settings, else its report."""
+        ev = self.get_event(eid) or {}
+        if ev.get("code"):
+            return ev["code"].strip().upper()
+        summary = _read_json(os.path.join(self.report_dir(eid), "event.json"), None) or {}
+        return (summary.get("code") or "").strip().upper()
 
     def event_logs(self, eid: str) -> List[str]:
         d = self.logs_dir(eid)
