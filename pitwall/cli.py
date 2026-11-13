@@ -136,9 +136,30 @@ def cmd_fetch(a) -> int:
               "(Pitwall remembers it).", file=sys.stderr)
         return 2
     root = os.path.abspath(os.path.expanduser(root))
+    if os.path.isdir(os.path.join(root, "01 events")) or os.path.isdir(os.path.join(root, "02 practice")):
+        print(f"{root} looks like one season's folder. Give the folder that holds the season folders "
+              f"(2026, 2027, ...) instead, so next season's logs go beside this one.", file=sys.stderr)
+        return 2
     if store and a.archive:
         store.save_settings({"archive": root})
     archive = Archive(root)
+    if a.regroup_practice:
+        plan = archive.regroup_plan()
+        if not plan:
+            print("Every practice day is already in a group folder.")
+            return 0
+        for src, dst in plan:
+            print(f"{os.path.relpath(src, root)}  ->  {os.path.relpath(dst, root)}")
+        if not a.yes:
+            print(f"{len(plan)} practice day folder(s) would move, as above. Nothing has moved yet: "
+                  f"run again with --yes to move them.")
+            return 0
+        problems = archive.regroup(plan)
+        for p in problems:
+            print("  " + p)
+        print(f"moved {len(plan) - len(problems)} folder(s). If the archive is also on Google Drive, "
+              f"the old day folders there need the same move.")
+        return 1 if problems else 0
     if a.index_existing:
         n = archive.seed()
         print(f"{n} log file(s) already in {root} added to the index ({len(archive.files)} in all).")
@@ -239,6 +260,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                    help="note the logs already in the archive, so a fetch doesn't copy them again")
     f.add_argument("--data-dir", help="the Pitwall app's data folder (default: your user data folder)")
     f.add_argument("--no-pitwall", action="store_true", help="only fill the archive; don't add logs to Pitwall events")
+    f.add_argument("--regroup-practice", action="store_true",
+                   help="one-time tidy-up: move practice day folders into the group for the event before "
+                        "them (shows the moves; add --yes to make them)")
+    f.add_argument("--yes", action="store_true", help="with --regroup-practice: make the moves")
     f.set_defaults(fn=cmd_fetch)
 
     c = sub.add_parser("check", help="check a profile against a log")
