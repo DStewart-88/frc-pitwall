@@ -106,6 +106,35 @@ used.
 Event names come from the folder name (`2026-10-07_NHALT_Battle-Of-the-Bay` becomes "Battle
 Of the Bay"), or set one with `--name NHALT="Battle of the Bay"`.
 
+### Fetching logs off the robot's USB stick
+
+```sh
+python3 -m pitwall fetch /media/$USER/ROBOT --archive "~/FRC Logs" --index-existing   # the first time
+python3 -m pitwall fetch /media/$USER/ROBOT                                            # after that
+```
+
+`fetch` copies the logs that are new since last time from the stick (its `logs/` folder, or any
+folder of logs) into the team log archive, sorted, and adds match logs to their Pitwall event,
+whose report then rebuilds, in the running app too. **Nothing on the stick is moved, renamed or
+deleted**; clearing it stays a job done by hand.
+
+- A log is sorted by what's inside it, not its file name: FMS match logs by their event code,
+  practice logs by the day they were recorded. A practice log from one of an event's match days
+  goes with that event, even if it has no event code; one recorded at the shop later goes by
+  its date, even if the Driver Station still sent the old event code.
+- The archive layout: `<year> Logs/<date>_<CODE>_<Name>/` for an event (with `practice/`,
+  `boot/` for logs where the robot was never enabled, and `hoot/` for Phoenix and REV logs),
+  and `<year> Logs/practice/<date>/` away from events. An event folder already in the archive
+  is reused when its name contains the event code.
+- The archive keeps an index of everything copied (`.pitwall/index.json`: name, size,
+  checksum), so a fetch only copies what's new. `--index-existing` adds the logs already in the
+  archive to the index, so the first fetch from a stick that still holds them doesn't copy
+  them again.
+- A log that's still being written (its size changes between two looks) is left for next time.
+- Match logs go to the Pitwall event with the same event code (an event learns its code from
+  its first report). Match logs for an event code Pitwall doesn't have yet stay in the archive,
+  and the fetch says so.
+
 ### Other commands
 
 ```sh

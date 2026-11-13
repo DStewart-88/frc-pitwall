@@ -52,6 +52,7 @@ class Worker:
         self._wake = threading.Condition(self._lock)
         self._queue: List[str] = []
         self._seen: Dict[str, Tuple[int, float, float]] = {}   # source path -> (size, mtime, first seen)
+        self._log_sigs: Dict[str, Tuple[Tuple[str, int], ...]] = {}   # event -> logs it held last look
         self._stop = threading.Event()
         self._import_lock = threading.Lock()     # one import at a time (watcher vs. "Add logs")
         self._threads: List[threading.Thread] = []
@@ -184,14 +185,26 @@ class Worker:
     def _watch_loop(self) -> None:
         while not self._stop.is_set():
             for ev in self.store.list_events():
+                if self._logs_changed(ev["id"]):         # logs put in by a fetch (or by hand)
+                    self.request_build(ev["id"])
                 if not ev["watch"] or not ev["sources"]:
                     continue
                 try:
                     if self.import_from_sources(ev["id"]):
+                        self._logs_changed(ev["id"])
                         self.request_build(ev["id"])
                 except OSError as e:
                     self._set(ev["id"], detail=f"Couldn't read a watched folder: {e}")
             self._stop.wait(self.poll_s)
+
+    def _logs_changed(self, eid: str) -> bool:
+        """True when the event's logs folder holds different logs than last time it was looked at
+        (the first look only takes note: start() already queued anything out of date)."""
+        sig = tuple((os.path.basename(p), os.path.getsize(p)) for p in self.store.event_logs(eid)
+                    if os.path.exists(p))
+        prev = self._log_sigs.get(eid)
+        self._log_sigs[eid] = sig
+        return prev is not None and prev != sig
 
     # ------------------------------------------------------------ building reports
 
@@ -250,6 +263,11 @@ class Worker:
         if prev:
             attach_comparison(ev, strip_for_compare(prev))
         ev["app_event_id"] = eid
+        # Name the event and note its code from the logs (before the report is written, so the
+        # report stays newer than the settings).
+        fill = {k: v for k, v in (("name", ev["name"]), ("code", ev["code"])) if not ev_cfg.get(k) and v}
+        if fill and self.store.get_event(eid):
+            self.store.save_event(eid, fill)
 
         rdir = self.store.report_dir(eid)
         before = None
@@ -274,8 +292,6 @@ class Worker:
             s = self._st(eid)
             s.update(state="idle", detail="", error=None, built_at=_now())
             s["version"] += 1
-        if not ev_cfg["name"]:
-            self.store.save_event(eid, {"name": ev["name"]})
         after = json.loads(json.dumps((ev["name"], ev["first_stamp"], ev["averages"])))
         self._rebuild_dependents(eid, ev_cfg["profile"], ev,
                                  changed=list(after) != (list(before) if before else None))
