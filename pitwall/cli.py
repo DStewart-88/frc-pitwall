@@ -125,6 +125,66 @@ def cmd_app(a) -> int:
     return 0
 
 
+def progress_fn():
+    last = [""]
+
+    def progress(stage: str, done: int, total: int, name: str) -> None:
+        if stage == "copy" and name and sys.stdout.isatty():
+            line = f"copying {done + 1}/{total}  {name}"
+            print("\r" + line[:100].ljust(len(last[0])), end="", flush=True)
+            last[0] = line[:100]
+        elif stage == "copy" and not name and last[0]:
+            print("\r" + " " * len(last[0]) + "\r", end="", flush=True)
+    return progress
+
+
+def _fetch_robot(a, archive, store, progress) -> int:
+    from .fetch import fetch, summary_lines
+    from .fetch.robot import Robot, RobotError, SftpSource, find_robot, have_sftp, install_hint
+    if not have_sftp():
+        print(f"Fetching from the robot needs the paramiko package. Install it with: {install_hint()}",
+              file=sys.stderr)
+        return 2
+    team = int((store.settings() if store else {}).get("team") or 88) if not a.team else a.team
+    if a.robot:
+        host, port = a.robot, 22
+        if host.count(":") == 1:                      # host:port (not an IPv6 address)
+            host, p = host.split(":")
+            port = int(p)
+        robot = Robot(host, "given", None, port=port)
+        print(f"Using {a.robot}.")
+    else:
+        print(f"Looking for team {team}'s roboRIO...", flush=True)
+        robot = find_robot(team)
+        if robot is None:
+            print("No robot found at 10.%d.%d.2, 172.22.11.2, roboRIO-%d-FRC.local or by IPv6 on a USB link. "
+                  "Is it on and connected?" % (team // 100, team % 100, team), file=sys.stderr)
+            return 1
+        wired = {True: "wired link", False: "wireless link", None: "link type unknown"}[robot.wired]
+        print(f"Found the {robot.label}, {wired}.")
+    try:
+        with SftpSource(robot) as src:
+            files = src.list()
+            print(f"Logged in as lvuser ({src.login}); {len(files)} log files in /U/logs "
+                  f"({sum(f.size for f in files) / 1e9:.2f} GB).")
+            space = src.stick_space()
+            if space:
+                print(f"Stick: {space['free'] / 1e9:.1f} GB free of {space['total'] / 1e9:.1f} GB.")
+            new = [f for f in files if f.size and not archive.has(f.name, f.size)]
+            print(f"{len(new)} of them aren't in the archive yet ({sum(f.size for f in new) / 1e9:.2f} GB).")
+            if a.check:
+                print("--check: nothing copied.")
+                return 0
+            res = fetch(src, archive, store, progress)
+    except (RobotError, OSError) as e:
+        print(f"Robot fetch stopped: {e}", file=sys.stderr)
+        return 1
+    for line in summary_lines(res):
+        print(line)
+    print(f"archive: {archive.root}")
+    return 1 if res.errors else 0
+
+
 def cmd_fetch(a) -> int:
     from .app.store import Store
     from .fetch import Archive, LocalSource, fetch, summary_lines
@@ -163,23 +223,16 @@ def cmd_fetch(a) -> int:
     if a.index_existing:
         n = archive.seed()
         print(f"{n} log file(s) already in {root} added to the index ({len(archive.files)} in all).")
-        if not a.source:
+        if not a.source and a.robot is None:
             return 0
+    if a.robot is not None:
+        return _fetch_robot(a, archive, store, progress_fn())
     if not a.source:
-        print("Fetch from where? Give the stick or folder, e.g. pitwall fetch /media/$USER/ROBOT", file=sys.stderr)
+        print("Fetch from where? Give the stick or folder (pitwall fetch /media/$USER/ROBOT), "
+              "or --robot to fetch from the robot.", file=sys.stderr)
         return 2
-    last = [""]
-
-    def progress(stage: str, done: int, total: int, name: str) -> None:
-        if stage == "copy" and name and sys.stdout.isatty():
-            line = f"copying {done + 1}/{total}  {name}"
-            print("\r" + line[:100].ljust(len(last[0])), end="", flush=True)
-            last[0] = line[:100]
-        elif stage == "copy" and not name and last[0]:
-            print("\r" + " " * len(last[0]) + "\r", end="", flush=True)
-
     try:
-        res = fetch(LocalSource(a.source), archive, store, progress)
+        res = fetch(LocalSource(a.source), archive, store, progress_fn())
     except FileNotFoundError as e:
         print(e, file=sys.stderr)
         return 1
@@ -260,6 +313,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                    help="note the logs already in the archive, so a fetch doesn't copy them again")
     f.add_argument("--data-dir", help="the Pitwall app's data folder (default: your user data folder)")
     f.add_argument("--no-pitwall", action="store_true", help="only fill the archive; don't add logs to Pitwall events")
+    f.add_argument("--robot", nargs="?", const="", metavar="ADDRESS",
+                   help="fetch from the robot over SFTP (found by itself, or at ADDRESS); read-only")
+    f.add_argument("--check", action="store_true",
+                   help="with --robot: find the robot, log in and list its logs, but copy nothing")
+    f.add_argument("--team", type=int, help="team number for finding the robot (default 88, or the app's setting)")
     f.add_argument("--regroup-practice", action="store_true",
                    help="one-time tidy-up: move practice day folders into the group for the event before "
                         "them (shows the moves; add --yes to make them)")

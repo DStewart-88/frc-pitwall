@@ -33,8 +33,21 @@ class InstallWindowsTest(unittest.TestCase):
     def run_main(self, *args):
         with mock.patch.object(iw.os, "name", "nt"), mock.patch.object(iw, "powershell", self.shell), \
                 mock.patch.object(iw.sys, "executable", os.path.join("Python313", "python.exe")), \
-                mock.patch.object(iw.os.path, "isfile", lambda p: True):
+                mock.patch.object(iw.os.path, "isfile", lambda p: True), \
+                mock.patch.object(iw, "have_paramiko", lambda py: True):
             return iw.main(list(args))
+
+    def test_paramiko_is_installed_when_missing(self):
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            return mock.Mock(returncode=1 if cmd[1] == "-c" else 0)
+        with mock.patch.object(iw.subprocess, "run", run):
+            self.assertTrue(iw.have_paramiko("python.exe"))
+        self.assertEqual(calls[1], ["python.exe", "-m", "pip", "install", "--user", "--quiet", "paramiko"])
+        with mock.patch.object(iw.subprocess, "run", mock.Mock(side_effect=OSError)):
+            self.assertFalse(iw.have_paramiko("python.exe"))
 
     def test_quote(self):
         self.assertEqual(iw.ps_quote("C:\\Team's Laptop\\x"), "'C:\\Team''s Laptop\\x'")

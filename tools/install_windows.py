@@ -58,6 +58,22 @@ def make_shortcut(path: str, target: str) -> None:
     powershell(script)
 
 
+def have_paramiko(python: str) -> bool:
+    """Fetching logs from the robot over SFTP needs paramiko: install it for this user if it's missing."""
+    try:
+        if subprocess.run([python, "-c", "import paramiko"], capture_output=True).returncode == 0:
+            return True
+        print("Installing paramiko (for fetching logs from the robot)...")
+        ok = subprocess.run([python, "-m", "pip", "install", "--user", "--quiet", "paramiko"]).returncode == 0
+    except OSError:
+        ok = False
+    if not ok:
+        print("  Couldn't install it. Pitwall works without it, except fetching from the robot.")
+        print(f"  To add it later: {python} -m pip install paramiko")
+        return False
+    return True
+
+
 def main(argv: list) -> int:
     if os.name != "nt":
         print("This installer is for Windows. On Linux, run ./install-linux.sh")
@@ -90,6 +106,7 @@ def main(argv: list) -> int:
         make_shortcut(p, target)
         made.append(p)
     from pitwall import __version__
+    have_paramiko(sys.executable)
     print(f"Pitwall {__version__} installed.")
     for p in made:
         print(f"  shortcut: {p}")

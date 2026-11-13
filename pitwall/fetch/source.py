@@ -26,6 +26,7 @@ class RemoteFile:
 
 class Source:
     label = "source"
+    mtime_reliable = True      # file times are real times (not true on the robot before the DS syncs it)
 
     def list(self) -> List[RemoteFile]:
         raise NotImplementedError
@@ -73,8 +74,12 @@ class LocalSource(Source):
 
 def still_growing(source: Source, files: List[RemoteFile], wait_s: float = 3.0) -> set:
     """Names of files whose size changes between two listings `wait_s` apart: the log the
-    robot is still writing. Only files changed in the last minute are checked again."""
-    recent = [f for f in files if time.time() - f.mtime < 60]
+    robot is still writing. Where file times can be trusted, only files changed in the last
+    minute are checked again; on the robot (whose clock may be a placeholder) all of them are."""
+    if getattr(source, "mtime_reliable", True):
+        recent = [f for f in files if time.time() - f.mtime < 60]
+    else:
+        recent = list(files)
     if not recent:
         return set()
     time.sleep(wait_s)

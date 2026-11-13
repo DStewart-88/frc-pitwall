@@ -29,6 +29,7 @@ from ..setup.draft import draft_to_toml, make_draft
 from ..setup.scan import scan
 from ..wpilog import WPILog, WPILogError
 from .setup_page import setup_page
+from .robotwatch import RobotWatch, archive_ok
 from .worker import Worker, drives, list_folder, logs_in
 
 MAX_BODY = 8 * 1024 * 1024
@@ -42,6 +43,7 @@ class App:
         self.worker = Worker(self.store, cache_dir if cache_dir is not None else default_dir(), jobs, poll_s)
         self.httpd: Optional[ThreadingHTTPServer] = None
         self.build = build_id()
+        self.robot = RobotWatch(self.store)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -114,6 +116,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({"pitwall": __version__, "data": a.store.root, "build": a.build})
             if parts == ["api", "status"]:
                 return self.json(a.worker.all_status())
+            if parts == ["api", "robot"]:
+                return self.json(a.robot.get_status())
             if parts == ["api", "browse"]:
                 d = list_folder((q.get("path") or [""])[0] or os.path.expanduser("~"), (q.get("kind") or ["logs"])[0])
                 d["places"] = drives()
@@ -245,6 +249,28 @@ class Handler(BaseHTTPRequestHandler):
                 if action == "delete":
                     s.delete_event(eid)
                     return self.json({"ok": True})
+            if parts == ["api", "robot", "fetch"]:
+                folder = body.get("folder")
+                a.robot.request_fetch(os.path.abspath(folder) if folder else None)
+                return self.json({"ok": True})
+            if parts == ["api", "robot", "settings"]:
+                changes = {}
+                if "archive" in body:
+                    path = os.path.abspath(os.path.expanduser(body["archive"] or ""))
+                    why = archive_ok(path)
+                    if why:
+                        return self.error_json(why)
+                    changes["archive"] = path
+                if "auto_fetch" in body:
+                    changes["auto_fetch"] = bool(body["auto_fetch"])
+                if "team" in body:
+                    team = int(body["team"])
+                    if not 1 <= team <= 99999:
+                        return self.error_json("That isn't a team number.")
+                    changes["team"] = team
+                s.save_settings(changes)
+                a.robot._wake.set()
+                return self.json(a.robot.get_status())
             if parts == ["api", "profiles"]:
                 if body.get("builtin"):
                     pid = s.add_builtin_profile(body["builtin"])
@@ -373,6 +399,7 @@ def serve(data_dir: Optional[str] = None, port: int = 8088, open_browser: bool =
     httpd, port = make_server(app, port)
     app.httpd = httpd
     app.worker.start()
+    app.robot.start()
     url = f"http://127.0.0.1:{port}/"
     try:
         path = _instance_file(app.store.root)

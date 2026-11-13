@@ -35,6 +35,11 @@ a.evcard:hover{box-shadow:0 6px 16px rgba(1,25,69,.14)}
 .evcard .nums b{display:block;font-size:20px;font-variant-numeric:tabular-nums} .evcard .nums span{font-size:11px;color:var(--muted)}
 label.f{display:block;font-weight:700;margin:18px 0 6px} .hint{color:var(--muted);font-size:13px;margin:4px 0 0}
 input[type=text],select{width:100%;max-width:560px;min-height:42px;padding:6px 10px;border:1px solid #b9c0cf;border-radius:4px;font:15px Arial,sans-serif;background:#fff}
+.robot{margin-bottom:24px}.robot .rb-btns{display:flex;gap:10px;flex-wrap:wrap}
+.robot .warn{color:#8a5a00;font-weight:bold}.robot .err{color:#bd1314}
+.robot .rb-result{margin-top:12px;padding:10px 14px;background:#f5f7fa;border-radius:6px;font-size:14px}
+.robot .rb-result ul{margin:6px 0 0;padding-left:18px}
+.robot .rb-foot{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:14px;font-size:13px}
 .picker{border:1px solid var(--line);border-radius:6px;overflow:hidden;max-width:820px}
 .picker .places{display:flex;flex-wrap:wrap;gap:8px;padding:12px;background:#f5f7fa;border-bottom:1px solid var(--line)}
 .picker .crumb{padding:10px 12px;font-size:13px;color:var(--muted);border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center;word-break:break-all}
@@ -124,7 +129,7 @@ function FolderPicker(root,onPick,opts){
         use.disabled=!d.logs_below;
       }else{
         count.textContent=d.logs_below?(d.logs_below+' log file'+(d.logs_below===1?'':'s')+' in this folder'+(d.logs_below>d.logs?' and the folders inside it':'')):'No log files here';
-        use.disabled=!d.logs_below;
+        use.disabled=!d.logs_below&&!opts.any;
       }
     }).catch(function(e){crumb.textContent=e.message;});
   }
@@ -167,7 +172,7 @@ then you check what it found. That's saved on this computer and used for every e
     grid = ('<div class="cards">' + "".join(cards) + "</div>") if cards else (
         '<div class="card empty"><h2>No events yet</h2><p>Make one, then point Pitwall at the folder or USB stick '
         'with the robot logs. New logs are picked up as they arrive.</p></div>')
-    body = f"""<div class="row"><div><p class="eyebrow">Events</p><h1>Robot logs, by event</h1></div>
+    body = f"""{ROBOT_PANEL}<div class="row"><div><p class="eyebrow">Events</p><h1>Robot logs, by event</h1></div>
 <a class="btn primary big-btn" href="/events/new">+ New event</a></div>
 {grid}
 <script>
@@ -177,6 +182,84 @@ function poll(){{api('GET','/api/status').then(function(all){{
 poll();setInterval(poll,3000);
 </script>"""
     return page("Events", body, token, "events")
+
+
+# ---------------------------------------------------------------- robot panel
+
+ROBOT_PANEL = r"""<section class="card robot" id="robot"><div class="row" style="margin:0">
+<div><p class="eyebrow">Robot</p><h2 id="rb-head" style="margin:0">Looking for the robot…</h2>
+<div id="rb-lines" class="meta"></div></div>
+<div class="rb-btns"><button class="btn primary" id="rb-get" disabled>Get logs</button>
+<button class="btn" id="rb-stick">From a USB stick…</button></div></div>
+<div id="rb-last"></div>
+<div class="rb-foot meta"><label><input type="checkbox" id="rb-auto"> Fetch new logs by itself when the robot
+is tethered (USB or Ethernet, never over the radio)</label>
+<span>Archive: <span id="rb-arch"></span> <a href="#" id="rb-arch-change">Change</a></span></div>
+<div id="rb-pick" style="display:none;margin-top:12px"><p id="rb-pick-what" class="hint"></p><div id="rb-picker"></div></div>
+<div id="rb-msg"></div></section>
+<script>
+(function(){
+var RB=null,picker=null,pickFor=null;
+function gb(b){return b>=1e9?(b/1e9).toFixed(1)+' GB':Math.max(1,Math.round(b/1e6))+' MB';}
+function ago(t){var s=Math.round(Date.now()/1000-t);return s<90?'just now':s<5400?Math.round(s/60)+' min ago':
+  Math.round(s/3600)+' h ago';}
+function line(t,cls){return '<div'+(cls?' class="'+cls+'"':'')+'>'+t+'</div>';}
+function render(r){RB=r;var h='',L='';
+  if(!r.archive){h='Where should fetched logs go?';
+    L=line('Choose the team log archive folder: the one that holds the season folders (2026, 2027, …).');
+    el('rb-get').disabled=true;}
+  else if(r.fetching){var p=r.progress||{};h='Fetching logs…';
+    L=line(p.stage==='copy'&&p.total?'Copying '+Math.min(p.done+1,p.total)+' of '+p.total+(p.name?': '+escHtml(p.name):''):
+      p.stage==='file'&&p.total?'Sorting into the archive ('+p.done+' of '+p.total+')':'Looking at the stick');}
+  else if(!r.sftp){h='Fetching from the robot needs one more package';
+    L=line('Install it with <code>'+escHtml(r.install_hint)+'</code>, then restart Pitwall. '+
+      'You can still fetch from the robot\'s stick plugged into this computer.');}
+  else if(r.connected){var rb=r.robot;h='Robot connected over '+escHtml(rb.via)+' <span class="meta">('+escHtml(rb.host)+')</span>';
+    var st=r.stick;
+    if(st){var sp=st.free!=null?' · '+gb(st.free)+' free of '+gb(st.total):'';
+      L+=line(st.files.toLocaleString()+' log files on its USB stick'+sp);
+      if(st.files>=r.clear_at)L+=line('Time to clear the stick: it holds '+st.files.toLocaleString()+' files. '+
+        (r.waiting===0?'Everything on it is in the archive.':'Get logs first, so everything on it is in the archive.'),'warn');}
+    if(r.waiting!=null)L+=line(r.waiting?'<b>'+r.waiting+' new log file'+(r.waiting===1?'':'s')+'</b> ('+gb(r.waiting_bytes)+') not in the archive yet':
+      'Every log on the robot is in the archive');}
+  else{h='No robot found';L=line('Connect by USB or Ethernet (or the radio). Or plug the robot\'s USB stick into this computer.');}
+  if(r.error)L+=line(escHtml(r.error),'err');
+  el('rb-head').innerHTML=h;el('rb-lines').innerHTML=L;
+  el('rb-get').disabled=!(r.archive&&r.sftp&&r.connected&&!r.fetching);
+  el('rb-stick').disabled=!!r.fetching;
+  el('rb-auto').checked=!!r.auto_fetch;
+  el('rb-arch').textContent=r.archive||'not chosen';el('rb-arch-change').textContent=r.archive?'Change':'Choose';
+  var last=r.last,X='';
+  if(last){X='<div class="rb-result"><b>Last fetch, '+ago(last.at)+'</b> from '+escHtml(last.source)+'<ul>';
+    (last.handed||[]).forEach(function(e){X+='<li>'+escHtml(e.labels.join(', '))+' added to <a href="/events/'+
+      encodeURIComponent(e.id)+'/">'+escHtml(e.name)+'</a></li>';});
+    Object.keys(last.no_event||{}).forEach(function(c){X+='<li>'+last.no_event[c]+' '+escHtml(c)+
+      ' match log(s) are in the archive, but no event here has code '+escHtml(c)+'. <a href="/events/new">Make one</a></li>';});
+    X+='<li>'+escHtml(last.lines[0])+'</li>';
+    if(last.growing&&last.growing.length)X+='<li>Left for next time (still being written): '+escHtml(last.growing.join(', '))+'</li>';
+    if(last.errors)X+='<li class="err">'+last.errors+' file(s) couldn\'t be copied: see below</li>';
+    X+='</ul></div>';}
+  el('rb-last').innerHTML=X;
+}
+function msg(t){el('rb-msg').innerHTML=t?'<div class="msg err">'+escHtml(t)+'</div>':'';}
+function poll(){api('GET','/api/robot').then(render).catch(function(){});}
+function openPicker(what){pickFor=what;el('rb-pick').style.display='';
+  el('rb-pick-what').textContent=what==='archive'?'Pick the folder that holds the season folders (2026, 2027, …).':
+    'Pick the robot\'s USB stick (or the folder of logs on it).';
+  picker=FolderPicker(el('rb-picker'),function(path){el('rb-pick').style.display='none';
+    if(pickFor==='archive')api('POST','/api/robot/settings',{archive:path}).then(function(r){msg('');render(r);}).catch(function(e){msg(e.message);});
+    else api('POST','/api/robot/fetch',{folder:path}).then(function(){msg('');setTimeout(poll,300);}).catch(function(e){msg(e.message);});
+  },{kind:'logs',any:what==='archive',useLabel:what==='archive'?'Use this folder':'Fetch from here',start:what==='archive'?(RB&&RB.archive)||'':''});}
+el('rb-get').onclick=function(){
+  if(RB&&RB.waiting>RB.auto_max&&!confirm('Copy '+RB.waiting+' log files ('+gb(RB.waiting_bytes)+') from the robot? '+
+    'That can take a while. If they are already in the archive, add them to its index first (pitwall fetch --index-existing).'))return;
+  api('POST','/api/robot/fetch',{}).then(function(){msg('');setTimeout(poll,300);}).catch(function(e){msg(e.message);});};
+el('rb-stick').onclick=function(){if(RB&&!RB.archive)return openPicker('archive');openPicker('stick');};
+el('rb-arch-change').onclick=function(e){e.preventDefault();openPicker('archive');};
+el('rb-auto').onchange=function(){api('POST','/api/robot/settings',{auto_fetch:this.checked}).then(render).catch(function(e){msg(e.message);});};
+poll();setInterval(poll,3000);
+})();
+</script>"""
 
 
 # ---------------------------------------------------------------- new event

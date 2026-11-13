@@ -24,7 +24,7 @@ line still works too.
 
 ## The app
 
-**Install on Linux** (Python 3.11 or newer; no other packages, no root):
+**Install on Linux** (Python 3.11 or newer, no root; fetching from the robot also needs `sudo apt install python3-paramiko`):
 
 ```sh
 git clone https://github.com/DStewart-88/frc-pitwall
@@ -69,7 +69,7 @@ The app keeps its profiles, copied logs and reports in your user data folder
 
 ## Command line
 
-Needs Python 3.11 or newer. No other packages. (On Windows, type `py` instead of `python3`.)
+Needs Python 3.11 or newer. No other packages (fetching from the robot also needs `paramiko`). (On Windows, type `py` instead of `python3`.)
 
 **Event report**: point it at one or more event folders.
 
@@ -106,7 +106,28 @@ used.
 Event names come from the folder name (`2026-10-07_NHALT_Battle-Of-the-Bay` becomes "Battle
 Of the Bay"), or set one with `--name NHALT="Battle of the Bay"`.
 
-### Fetching logs off the robot's USB stick
+### Fetching logs off the robot
+
+In the app, the **Robot** panel on the home page shows whether the robot is connected (USB,
+Ethernet or the radio), how many of the logs on its USB stick aren't in the archive yet, and the
+stick's free space, with a reminder to clear it once it holds 1,000 files. **Get logs** fetches
+them; **From a USB stick…** fetches from the robot's stick plugged into this computer. With the
+robot tethered by USB or Ethernet, new logs are fetched by themselves (never over the radio,
+and never more than 40 at once without a click).
+
+From the command line:
+
+```sh
+python3 -m pitwall fetch --robot --check     # find the robot, log in, list its logs; copy nothing
+python3 -m pitwall fetch --robot             # fetch from the robot
+```
+
+The robot is found at 10.TE.AM.2, then 172.22.11.2, then `roboRIO-<team>-FRC.local`, then by
+its IPv6 address on a USB link (a roboRIO whose USB link never got an address still answers
+there). Pitwall logs in over SFTP as `lvuser` with no password, as AdvantageScope does, and
+only lists and reads `/U/logs`; the one command it runs is `df`, for the free space. This needs
+the `paramiko` package: the Windows installer adds it; on Linux, `sudo apt install
+python3-paramiko`.
 
 ```sh
 python3 -m pitwall fetch /media/$USER/ROBOT --archive "~/FRC Logs" --index-existing   # the first time
