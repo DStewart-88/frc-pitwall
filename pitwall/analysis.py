@@ -3,6 +3,8 @@
 `analyze_logs` is what the command line (and later the app) calls. Each log comes back as
 one of:
   {"ok": payload}     payload = identity, flags, one result per module (power, scoring, ...), source file info
+  {"parts": [payload, ...]}  a log with no FMS match but one or more Driver Station practice-mode
+                      matches in it: one payload each, named <log>.pm1.wpilog, <log>.pm2.wpilog, ...
   {"skip": reason}    a log Pitwall can't report on (never enabled, no motor current, ...)
   {"error": message}  a broken or unreadable log
 """
@@ -12,11 +14,11 @@ import multiprocessing
 import os
 import re
 from concurrent.futures import ProcessPoolExecutor
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import __version__
 from .cache import Cache, cache_key, file_sha256
-from .match import SkipLog, build_match
+from .match import SkipLog, _identity, build_match, practice_windows
 from .modules import MODULES
 from .profile import ProfileError, load_profile
 from .wpilog import WPILog, WPILogError
@@ -37,6 +39,7 @@ def identity_dict(m) -> Dict[str, Any]:
     d = dataclasses.asdict(m.identity)
     d["label"] = m.identity.label
     d["is_fms"] = m.identity.is_fms
+    d["is_match"] = m.identity.is_match
     d["stamp"] = log_stamp(m.identity.file)
     return d
 
@@ -57,17 +60,19 @@ def _analyze_one(path: str, profile_path: str, current_mode: Optional[str],
         hit["cached"] = True
         if "ok" in hit:
             hit["ok"]["source"]["path"] = path
+        for p in hit.get("parts") or []:
+            p["source"]["path"] = path
         return hit
     source = {"file": os.path.basename(path), "path": path, "sha256": sha, "bytes": os.path.getsize(path)}
     try:
         log = WPILog(path)
-        m = build_match(log, profile)
-        ok = {"pitwall": __version__, "profile": profile.name, "identity": identity_dict(m),
-              "flags": m.flags, "silent": m.silent, "source": source}
-        for mod in MODULES:
-            if mod.applies(profile):
-                ok[mod.name] = mod.analyze(m)
-        entry = {"ok": ok}
+        windows = [] if _identity(log).is_fms else practice_windows(log, profile)
+        if windows:
+            entry = {"parts": _practice_parts(log, profile, windows, source), "source": source}
+            if not entry["parts"]:
+                entry = {"skip": "its practice matches couldn't be reported on", "source": source}
+        else:
+            entry = {"ok": _payload(build_match(log, profile), profile, source)}
     except SkipLog as e:
         entry = {"skip": str(e), "source": source}
     except (WPILogError, ValueError, KeyError, IndexError) as e:
@@ -75,6 +80,48 @@ def _analyze_one(path: str, profile_path: str, current_mode: Optional[str],
     cache.put(key, entry)
     entry["cached"] = False
     return entry
+
+
+def _payload(m, profile, source: Dict[str, Any]) -> Dict[str, Any]:
+    ok = {"pitwall": __version__, "profile": profile.name, "identity": identity_dict(m),
+          "flags": m.flags, "silent": m.silent, "source": source}
+    for mod in MODULES:
+        if mod.applies(profile):
+            ok[mod.name] = mod.analyze(m)
+    return ok
+
+
+def _practice_parts(log: WPILog, profile, windows, source: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """One payload per practice-mode match in the log, each with its own name and start time."""
+    from .fetch.identify import _clock_start, stamp_from_name
+    import datetime as dt
+    start = _clock_start(log) or stamp_from_name(source["file"])
+    stem = os.path.splitext(source["file"])[0]
+    parts = []
+    for k, w in enumerate(windows, 1):
+        try:
+            m = build_match(log, profile, w, k)
+        except SkipLog:
+            continue
+        src = dict(source, file=f"{stem}.pm{k}.wpilog", log_file=source["file"], window=list(w))
+        p = _payload(m, profile, src)
+        if start:
+            t = dt.datetime.fromisoformat(start) + dt.timedelta(seconds=w[0] - log.t_span[0])
+            p["identity"]["stamp"] = t.strftime("%Y-%m-%d %H:%M:%S")
+            p["identity"]["day"] = t.strftime("%Y-%m-%d")
+        parts.append(p)
+    return parts
+
+
+def payloads_of(results) -> List[Tuple[str, Dict[str, Any]]]:
+    """[(path, payload)] for every match in analysis results, practice-mode parts included."""
+    out = []
+    for path, r in results:
+        if "ok" in r:
+            out.append((path, r["ok"]))
+        for p in r.get("parts") or []:
+            out.append((path, p))
+    return out
 
 
 def expand_paths(paths: List[str]) -> List[str]:
@@ -119,4 +166,4 @@ def analyze_logs(paths: List[str], profile_path: str, current_mode: Optional[str
     return results
 
 
-__all__ = ["analyze_logs", "expand_paths", "identity_dict", "log_stamp", "ProfileError"]
+__all__ = ["analyze_logs", "expand_paths", "identity_dict", "log_stamp", "payloads_of", "ProfileError"]

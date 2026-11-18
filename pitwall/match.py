@@ -31,15 +31,23 @@ class Identity:
     git_branch: str = ""
     git_dirty: bool = False
     build_date: str = ""
+    practice: int = 0         # a Driver Station practice-mode match: its number within the log (1, 2, ...)
 
     @property
     def is_fms(self) -> bool:
         return bool(self.match_type and self.match_number)
 
     @property
+    def is_match(self) -> bool:
+        """A real match (FMS) or one run like a match (Driver Station practice mode)."""
+        return self.is_fms or self.practice > 0
+
+    @property
     def label(self) -> str:
         if self.is_fms:
             return f"{self.match_type}{self.match_number}"
+        if self.practice:
+            return f"Practice match {self.practice}"
         m = re.search(r"(\d{2}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})", self.file)
         return f"Practice {m.group(1)}" if m else "Practice"
 
@@ -140,17 +148,14 @@ def _transitions(log: WPILog, key: Optional[str]) -> List[Tuple[float, bool]]:
     return out
 
 
-def build_match(log: WPILog, profile: Profile) -> Match:
-    check = check_profile(profile, log)
-    ident = _identity(log)
-    flags: List[str] = []
+MATCH_TIME_KEY = "/DriverStation/MatchTime"
+AUTO_TO_TELEOP_S = 6.0      # the Driver Station's pause between auto and teleop, with room to spare
 
-    en_key = first_present(log, profile.enabled)
-    auto_key = first_present(log, profile.autonomous)
-    en_tr = _transitions(log, en_key)
-    auto_tr = _transitions(log, auto_key)
 
-    # Enabled blocks, each tagged auto/teleop by the autonomous flag at its start.
+def enabled_blocks(log: WPILog, profile: Profile) -> List[Block]:
+    """Enabled stretches, each tagged auto/teleop by the autonomous flag at its start."""
+    en_tr = _transitions(log, first_present(log, profile.enabled))
+    auto_tr = _transitions(log, first_present(log, profile.autonomous))
     blocks: List[Block] = []
     span_end = log.t_span[1]
     for i, (t, on) in enumerate(en_tr):
@@ -162,6 +167,63 @@ def build_match(log: WPILog, profile: Profile) -> Match:
             if ta <= t + 1e-6:
                 auto_on = va
         blocks.append(Block(t, end, "auto" if auto_on else "teleop"))
+    return blocks
+
+
+def practice_windows(log: WPILog, profile: Profile) -> List[Tuple[float, float]]:
+    """Matches run with the Driver Station's practice mode, in a log with no FMS: [(start, end)].
+
+    Practice mode runs auto, pauses, then runs teleop, with the match timer counting down the
+    whole way. Outside a match the timer reads -1, so drilling (enable, drive, disable) never
+    looks like this: an auto enable with the timer running, then a teleop enable within a few
+    seconds, timer still running. (With no timer in the log, an auto enable of the game's
+    auto length stands in for it.) A match ends when teleop does; a teleop broken by a quick
+    disable and re-enable is still one match.
+    """
+    blocks = enabled_blocks(log, profile)
+    tm, vm = log.series(MATCH_TIME_KEY) if log.has(MATCH_TIME_KEY) else ([], [])
+
+    def timer_running(a: float, b: float) -> bool:
+        if not tm:
+            return True
+        return any(a - 1.0 <= t <= b and v is not None and v > 0 for t, v in zip(tm, vm))
+
+    out: List[Tuple[float, float]] = []
+    i = 0
+    while i < len(blocks) - 1:
+        a, t = blocks[i], blocks[i + 1]
+        gap = t.start - a.end
+        ok = (a.mode == "auto" and t.mode == "teleop" and 0 <= gap <= AUTO_TO_TELEOP_S
+              and timer_running(a.start, a.end) and timer_running(t.start, t.end))
+        if ok and not tm:
+            ok = abs((a.end - a.start) - profile.auto_s) <= 3.0
+        if not ok:
+            i += 1
+            continue
+        end, j = t.end, i + 2
+        limit = a.start + profile.auto_s + profile.teleop_s + 15.0
+        while j < len(blocks) and blocks[j].mode == "teleop" and blocks[j].start - end <= 3.0 \
+                and blocks[j].start < limit:
+            end = blocks[j].end
+            j += 1
+        out.append((a.start, end))
+        i = j
+    return out
+
+
+def build_match(log: WPILog, profile: Profile, window: Optional[Tuple[float, float]] = None,
+                practice: int = 0) -> Match:
+    """The match in `log`; with `window`, only that stretch of it (a practice-mode match, number
+    `practice` within the log)."""
+    check = check_profile(profile, log)
+    ident = _identity(log)
+    ident.practice = practice
+    flags: List[str] = []
+
+    blocks = enabled_blocks(log, profile)
+    span_end = log.t_span[1]
+    if window is not None:
+        blocks = [b for b in blocks if window[0] - 0.01 <= b.start <= window[1] + 0.01]
     if not blocks:
         raise SkipLog("the robot was never enabled in this log")
     on_s = sum(b.end - b.start for b in blocks)
@@ -197,7 +259,7 @@ def build_match(log: WPILog, profile: Profile) -> Match:
     # Match time remaining: from the nominal period lengths, so it's continuous (the DS
     # MatchTime signal is whole seconds and jitters).
     time_left: List[Optional[float]] = [None] * n
-    if ident.is_fms:
+    if ident.is_match:
         auto_b = next((b for b in blocks if b.mode == "auto"), None)
         tele_b = next((b for b in blocks if b.mode == "teleop"), None)
         for i, g in enumerate(grid):
@@ -214,6 +276,8 @@ def build_match(log: WPILog, profile: Profile) -> Match:
         nominal = profile.auto_s + profile.teleop_s
         if enabled_s < 0.9 * nominal:
             flags.append(f"Enabled for only {enabled_s:.0f} s of a {nominal:.0f} s match")
+        if ident.practice:
+            flags.append("Practice match (Driver Station practice mode, no field system)")
     else:
         flags.append("Not an FMS match (practice or test log)")
 
@@ -261,7 +325,7 @@ def _periods(m: Match) -> None:
     p = m.profile
     n = len(m.grid)
     m.period = [None] * n
-    if p.periods and m.identity.is_fms:
+    if p.periods and m.identity.is_match:
         last = len(p.periods) - 1
         for i, left in enumerate(m.time_left):
             if left is None:

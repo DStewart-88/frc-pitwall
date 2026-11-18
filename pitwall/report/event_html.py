@@ -71,7 +71,8 @@ def charge_by_match_svg(ev: Dict[str, Any], links: Dict[str, str]) -> str:
         rows.append(("match", m))
     avg_rows = []
     if ev["averages"].get("n"):
-        avg_rows.append(("avg", {"label": "Event average", "subs": ev["averages"]["subsystems"],
+        avg_rows.append(("avg", {"label": "Practice average" if ev.get("kind") == "practice" else "Event average",
+                                 "subs": ev["averages"]["subsystems"],
                                  "ah": ev["averages"]["ah"]}))
     C = ev.get("compare")
     if C:
@@ -629,10 +630,15 @@ def overview_html(ev: Dict[str, Any], links: Dict[str, str], power_stats: List[t
             f'<section class="card"><h2>Things to check</h2><ul class="obs">'
             f'{obs or "<li class=muted>Nothing to act on or watch. Each tab lists its own notes too.</li>"}</ul></section>'
             f'{other}'
-            f'<p class="muted small">Averages are per counted match ({n} of {total}), with the same rules for every '
-            f'module. A match isn\'t counted if it\'s a practice match, the robot was enabled for under 90% of it, a '
-            f'motor was missing from the CAN bus, or it drew under half the event\'s typical charge; Pitwall shows it '
-            f'anyway.</p>')
+            + (f'<p class="muted small">Averages are per counted practice match ({n} of {total}), with the same '
+               f'rules as at events: a match isn\'t counted if the robot was enabled for under 90% of it, a motor was '
+               f'missing from the CAN bus, or it drew under half the typical charge; Pitwall shows it anyway. '
+               f'Practice matches are the ones run with the Driver Station\'s practice mode.</p>'
+               if ev.get("kind") == "practice" else
+               f'<p class="muted small">Averages are per counted match ({n} of {total}), with the same rules for every '
+               f'module. A match isn\'t counted if it\'s a practice match, the robot was enabled for under 90% of it, a '
+               f'motor was missing from the CAN bus, or it drew under half the event\'s typical charge; Pitwall shows it '
+               f'anyway.</p>'))
 
 
 # ---------------------------------------------------------------- page
@@ -689,7 +695,12 @@ def render_event(ev: Dict[str, Any], series_by_label: Dict[str, Dict[str, Any]],
     # match table
     shoot = next((s for s in ev["states"] if s != "Other"), None)
     mrows = []
+    practice = ev.get("kind") == "practice"
+    day = None
     for m in ev["matches"]:
+        if practice and m.get("day") != day:
+            day = m.get("day")
+            mrows.append(f'<tr class="dayrow"><td colspan="11">{esc(nice_date(day or "") or "Undated")}</td></tr>')
         href = links.get(m["label"])
         lab = f'<a href="{esc(href)}">{esc(m["label"])}</a>' if href else esc(m["label"])
         Bm = m["brownout"]
@@ -785,7 +796,12 @@ For time left at first brownout, a bigger number means the battery gave out earl
                   for o in ev["observations"]) or '<li class="muted">Nothing flagged.</li>'
 
     other = ""
-    if ev["other_logs"] or ev["skipped"]:
+    if ev.get("kind") == "practice":
+        k = ev.get("logs_without_matches", 0)
+        other = (f'<p class="muted small">{k} other log{"s" if k != 1 else ""} from these practice days had no practice '
+                 f'match in them (drilling, pit work) and {"aren&#39;t" if k != 1 else "isn&#39;t"} in this report.</p>'
+                 if k else "")
+    elif ev["other_logs"] or ev["skipped"]:
         items = "".join(f'<li>{esc(o["label"])}: {o["enabled_s"]:.0f} s enabled, {o["ah"]:.2f} Ah '
                         f'<span class="muted small">{esc(o["file"])}</span></li>' for o in ev["other_logs"])
         items += "".join(f'<li class="muted">{esc(s["file"])}: skipped, {esc(s["reason"])}</li>'
@@ -810,7 +826,7 @@ For time left at first brownout, a bigger number means the battery gave out earl
     return PAGE.format(
         css=base_css() + SECTION_CSS + TABS_CSS, extra_css=EXTRA_CSS, head_js=HEAD_JS, tabs_js=TABS_JS,
         tabbar=tabbar(tabs), overview=overview,
-        scoring_panel=panel("scoring", "Scoring", scoring_body) if has_sc else "", donut_css=DONUT_CSS, donut_js=DONUT_JS, title=esc(ev["name"]), code=esc(ev["code"]),
+        scoring_panel=panel("scoring", "Scoring", scoring_body) if has_sc else "", donut_css=DONUT_CSS, donut_js=DONUT_JS, title=esc(ev["name"]), code=esc(ev["code"] or ("Practice" if ev.get("kind") == "practice" else "")),
         date=esc(date), profile=esc(ev["profile"]), builds=esc(", ".join(ev["builds"]) or "unknown"),
         n_matches=len(ev["matches"]), n=n, stats=stat_html, legend=legend,
         charge_chart=charge_by_match_svg(ev, links), charge_split=charge_split_html(ev),
@@ -820,6 +836,8 @@ For time left at first brownout, a bigger number means the battery gave out earl
         phase_card=phase_card, shift_card=shift_card, observations=obs,
         shade_note=("Grey shading marks the shifts where our hub was inactive." if ev.get("period_info") else ""), other=other,
         mode_note=esc(mode_note),
+        kind_lower="practice report" if ev.get("kind") == "practice" else "event report",
+        kind_upper="PRACTICE REPORT" if ev.get("kind") == "practice" else "EVENT REPORT",
     )
 
 
@@ -827,6 +845,7 @@ EXTRA_CSS = """
 .chart .link{fill:#0b4fa8;text-decoration:underline}
 .chart a:hover .link{fill:var(--navy)}
 td a{color:#0b4fa8} tr.dim td{color:var(--muted)}
+tr.dayrow td{font-weight:700;color:var(--navy);background:#f5f7fa;padding-top:10px}
 td.r{white-space:nowrap} tr.sum td{font-weight:700;border-top:2px solid var(--line)} table.narrow{max-width:760px}
 h3{margin:18px 0 6px;font-family:Michroma,sans-serif;font-weight:400;font-size:12px;letter-spacing:.08em}
 ul.plain{margin:0;padding-left:18px;font-size:14px;display:flex;flex-direction:column;gap:4px}
@@ -837,7 +856,7 @@ PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} · Pitwall event report</title>
+<title>{title} · Pitwall {kind_lower}</title>
 {head_js}
 <style>
 {css}
@@ -846,7 +865,7 @@ PAGE = """<!doctype html>
 </style>
 </head>
 <body>
-<header><div class="in"><span class="brand">TJ² <b>PITWALL</b> · EVENT REPORT</span>
+<header><div class="in"><span class="brand">TJ² <b>PITWALL</b> · {kind_upper}</span>
 <span class="meta">{n_matches} matches · builds {builds} · profile {profile}</span></div></header>
 <main>
 <div><p class="eyebrow">{code} · {date}</p><h1>{title}</h1></div>
