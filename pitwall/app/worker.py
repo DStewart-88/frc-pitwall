@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..analysis import analyze_logs
 from ..event import attach_comparison, strip_for_compare
-from ..eventrun import REPORT_VERSION, group_results, make_event, write_event
+from ..eventrun import REPORT_VERSION, group_results, make_event, practice_results, write_event
 from ..profile import ProfileError, load_profile
 from .store import Store
 
@@ -245,6 +245,8 @@ class Worker:
         results = analyze_logs(logs, profile_path, None, self.cache_dir, self.jobs, progress)
         pairs = list(zip(logs, results))
         errors = [{"file": os.path.basename(p), "reason": r["error"]} for p, r in pairs if "error" in r]
+        if ev_cfg.get("kind") == "practice":
+            return self._build_practice(eid, ev_cfg, profile, pairs, errors)
         groups, skipped, path_of, _ = group_results(pairs)
         groups = {c: g for c, g in groups.items() if g["matches"]}
         if not groups:
@@ -264,13 +266,31 @@ class Worker:
         self._set(eid, state="building", detail="Writing the report")
         ev = make_event(code, g, profile, name=ev_cfg["name"] or None, include=ev_cfg["include"],
                         exclude=ev_cfg["exclude"], skipped=sk, path_of=path_of)
+        self._finish(eid, ev_cfg, ev, g)
+
+    def _build_practice(self, eid: str, ev_cfg: Dict[str, Any], profile, pairs, errors) -> None:
+        g, without = practice_results(pairs)
+        if not g["matches"]:
+            self._set(eid, state="waiting", detail="No practice matches yet", error=None)
+            return
+        self._set(eid, state="building", detail="Writing the report")
+        ev = make_event("", g, profile, name=ev_cfg["name"] or "Practice", include=ev_cfg["include"],
+                        exclude=ev_cfg["exclude"], skipped=[{"file": e["file"], "reason": "couldn't be read: " + e["reason"]}
+                                                            for e in errors])
+        ev["kind"] = "practice"
+        ev["group"] = ev_cfg.get("group", "")
+        ev["logs_without_matches"] = without
+        self._finish(eid, ev_cfg, ev, g)
+
+    def _finish(self, eid: str, ev_cfg: Dict[str, Any], ev: Dict[str, Any], g) -> None:
         prev = self._baseline(eid, ev_cfg, ev)
         if prev:
             attach_comparison(ev, strip_for_compare(prev))
         ev["app_event_id"] = eid
         # Name the event and note its code from the logs (before the report is written, so the
         # report stays newer than the settings).
-        fill = {k: v for k, v in (("name", ev["name"]), ("code", ev["code"])) if not ev_cfg.get(k) and v}
+        fill = {k: v for k, v in (("name", ev["name"]), ("code", ev["code"])) if not ev_cfg.get(k) and v
+                and ev.get("kind") != "practice"}
         if fill and self.store.get_event(eid):
             self.store.save_event(eid, fill)
 
@@ -318,7 +338,8 @@ class Worker:
         cands = [(e, s) for e, s in self._summaries() if e["id"] != eid and s.get("averages", {}).get("n")]
         if cfg["compare"] not in ("auto", ""):
             return next((s for e, s in cands if e["id"] == cfg["compare"]), None)
-        earlier = [(e, s) for e, s in cands if e["profile"] == cfg["profile"]
+        # Automatically: the latest earlier event (never a practice report) for this robot.
+        earlier = [(e, s) for e, s in cands if e["profile"] == cfg["profile"] and s.get("kind") != "practice"
                    and s.get("first_stamp", "") < ev.get("first_stamp", "")]
         if not earlier:
             return None
@@ -326,7 +347,7 @@ class Worker:
 
     def _rebuild_dependents(self, eid: str, profile: str, ev: Dict[str, Any], changed: bool) -> None:
         """Later events that compare with this one need their comparison refreshed."""
-        if not changed:
+        if not changed or ev.get("kind") == "practice":      # nothing compares with a practice report
             return
         for e, s in self._summaries():
             if e["id"] == eid:

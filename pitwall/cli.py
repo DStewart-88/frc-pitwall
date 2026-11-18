@@ -35,6 +35,8 @@ def _run(a, paths: List[str]) -> List[Dict[str, Any]]:
             T = r["ok"]["power"]["totals"]
             msg = (f'{r["ok"]["identity"]["label"]:>10}  {T["ah"]:.2f} Ah  mean {T["mean_a"]:.0f} A  '
                    f'min {T["min_v"]:.2f} V')
+        elif "parts" in r:
+            msg = f"{len(r['parts'])} practice match(es) (Driver Station practice mode)"
         elif "skip" in r:
             msg = f"   skipped  {r['skip']}"
         else:

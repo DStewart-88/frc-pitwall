@@ -12,13 +12,17 @@ Nothing on the robot is ever changed (see pitwall.fetch.robot).
 """
 
 import os
+import re
 import threading
 import time
 import traceback
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from ..fetch import Archive, LocalSource, fetch, summary_lines
-from ..fetch.archive import EVENT_DIR, unclaimed_codes
+from ..eventrun import practice_name
+from ..fetch.archive import EVENT_DIR, PRACTICE, unclaimed_codes
+
+GROUP_DIR = re.compile(r"^\d{4}-\d{2}-\d{2}_(after_.+|build-season)$")
 from ..fetch.fetch import claim_code
 from ..fetch.robot import Robot, RobotError, SftpSource, find_robot, have_sftp, install_hint
 from .store import Store
@@ -76,12 +80,17 @@ class RobotWatch:
     # ------------------------------------------------------------ new event codes
 
     def refresh_codes(self) -> None:
-        """Note the event codes with match logs in the archive that no Pitwall event takes."""
+        """Note the event codes with match logs in the archive that no Pitwall event takes, and
+        make sure each practice group in the archive has its practice report."""
         self._codes_checked = True
         cfg = self.settings()
         if not cfg["archive"] or not os.path.isdir(cfg["archive"]):
             self._set(new_codes=[])
             return
+        try:
+            self.sync_practice(cfg["archive"])
+        except OSError as e:
+            self._set(error=f"Couldn't set up practice reports: {e}")
         claimed = [c for e in self.store.list_events() for c in self.store.event_codes(e["id"])]
         ignored = self.store.settings().get("ignored_codes") or []
         found = unclaimed_codes(Archive(cfg["archive"]), claimed, ignored)
@@ -89,6 +98,40 @@ class RobotWatch:
             m = EVENT_DIR.match(os.path.basename(f["folder"])) if f["folder"] else None
             f["name"] = m.group(3).replace("-", " ") if m and m.group(3) else f["code"]
         self._set(new_codes=found)
+
+    def sync_practice(self, root: str) -> List[str]:
+        """A practice report for each practice group folder in the archive (02 practice/<group>),
+        reading its logs in place. Returns the ids of reports made now."""
+        have = {e.get("group") for e in self.store.list_events() if e.get("kind") == "practice"}
+        made = []
+        for season in Archive(root).seasons():
+            folder = os.path.join(season, PRACTICE)
+            try:
+                groups = sorted(d for d in os.listdir(folder) if GROUP_DIR.match(d)
+                                and os.path.isdir(os.path.join(folder, d)))
+            except OSError:
+                continue
+            for d in groups:
+                rel = os.path.relpath(os.path.join(folder, d), root).replace(os.sep, "/")
+                if rel in have:
+                    continue
+                profile = self._usual_profile()
+                if not profile:
+                    return made
+                eid = self.store.create_event(practice_name(d), profile, [os.path.join(folder, d)], watch=False)
+                self.store.save_event(eid, {"kind": "practice", "group": rel})
+                made.append(eid)
+                self.on_logs(eid)
+        return made
+
+    def _usual_profile(self) -> str:
+        """The robot profile for a new practice report: the latest event's, else the first one."""
+        evs = sorted((e for e in self.store.list_events() if e.get("kind") != "practice"),
+                     key=lambda e: e.get("created", 0), reverse=True)
+        if evs:
+            return evs[0]["profile"]
+        ok = [p["id"] for p in self.store.list_profiles() if not p["error"]]
+        return ok[0] if ok else ""
 
     def answer_code(self, code: str, action: str, name: str = "", profile: str = "", event: str = "") -> Dict[str, Any]:
         """What to do with a new event code: "create" an event for it, "add" its logs to `event`,

@@ -6,13 +6,14 @@ import re
 from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
+from .analysis import payloads_of
 from .event import attach_comparison, build_event, group_by_event, strip_for_compare
 from .report.event_html import render_event
 from .report.html import render
 
 
 # Bump when the report pages change, so the app rebuilds reports made by an older Pitwall.
-REPORT_VERSION = 8
+REPORT_VERSION = 9
 
 
 def _stem(file_name: str) -> str:
@@ -52,8 +53,9 @@ def group_results(results: List[Tuple[str, Dict[str, Any]]]):
       path_of  {log file name: path}
     Logs with no event name, and skipped logs, join the event whose logs share their folder.
     """
-    payloads = [r["ok"] for _, r in results if "ok" in r]
-    path_of = {r["ok"]["source"]["file"]: p for p, r in results if "ok" in r}
+    pairs = payloads_of(results)
+    payloads = [p for _, p in pairs]
+    path_of = {p["source"]["file"]: path for path, p in pairs}
     groups = group_by_event(payloads)
 
     dir_event: Dict[str, Counter] = {}
@@ -83,6 +85,40 @@ def group_results(results: List[Tuple[str, Dict[str, Any]]]):
     if unplaced["matches"]:
         groups["EVENT"] = {"matches": unplaced["matches"], "other": []}
     return groups, skipped, path_of, len(unplaced["other"])
+
+
+def practice_results(results: List[Tuple[str, Dict[str, Any]]]):
+    """The practice-mode matches in analyzed logs, for a practice report.
+
+    Returns (group, logs_without): group = {"matches": [payload], "other": []}, the matches in time
+    order and labelled by day ("Oct 27 #1", "Oct 27 #2", "Oct 29 #1", ...); logs_without = how many
+    logs had no practice match (drilling, pit work).
+    """
+    import datetime as dt
+    parts = [p for _, r in results for p in (r.get("parts") or [])]
+    parts.sort(key=lambda p: (p["identity"].get("stamp") or "", p["source"]["file"]))
+    per_day: Counter = Counter()
+    for k, p in enumerate(parts, 1):
+        I = p["identity"]
+        day = I.get("day") or ""
+        per_day[day] += 1
+        try:
+            nice = dt.date.fromisoformat(day).strftime("%b %-d") if day else "Undated"
+        except ValueError:
+            nice = day
+        I.update(label=f"{nice} #{per_day[day]}", match_type="P", match_number=k)
+    without = sum(1 for _, r in results if not r.get("parts"))
+    return {"matches": parts, "other": []}, without
+
+
+def practice_name(group: str) -> str:
+    """'2026-10-24_after_NHMAN_RiverRage' -> 'Practice after RiverRage'."""
+    m = re.match(r"^(\d{4})-\d{2}-\d{2}_(?:after_([A-Za-z0-9]+)(?:_(.+))?|build-season)$", group)
+    if not m:
+        return f"Practice {group}"
+    if m.group(2) is None:
+        return f"Build season practice {m.group(1)}"
+    return "Practice after " + (m.group(3).replace("-", " ") if m.group(3) else m.group(2))
 
 
 def make_event(code: str, g: Dict[str, List[Dict[str, Any]]], profile, *, name: Optional[str] = None,
@@ -122,5 +158,6 @@ def write_event(ev: Dict[str, Any], g: Dict[str, List[Dict[str, Any]]], folder: 
     return index
 
 
-__all__ = ["write_match_report", "name_from_folder", "group_results", "make_event", "write_event",
+__all__ = ["write_match_report", "name_from_folder", "group_results", "practice_results", "practice_name",
+           "make_event", "write_event",
            "attach_comparison", "strip_for_compare"]

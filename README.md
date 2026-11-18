@@ -94,6 +94,16 @@ was never enabled, or that don't contain motor current for this profile, are lis
 Each log is analyzed once and kept in a cache, so running again after the next match only
 reads the new log. `--no-cache` turns that off.
 
+### Practice matches
+
+Practice matches run with the Driver Station's practice mode get the same reports as event
+matches. Pitwall finds them inside the shop logs (auto with the match timer running, then
+teleop), so drilling and pit work aren't mistaken for them, and one log can hold several. In
+the app there's a practice report for each practice group in the archive (`02 practice/<event
+date>_after_<event>/`), made by itself and read from the archive in place: practice matches
+labelled by day ("Oct 27 #1"), the match table split by day, the same counting rules as at
+events, and a comparison with the event before. They're under **Practice** on the home page.
+
 ### Which matches count
 
 Every match is shown, but the event averages leave out matches that weren't normal: practice

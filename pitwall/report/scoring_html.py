@@ -220,7 +220,8 @@ def shots_by_match_svg(ev: Dict[str, Any], links: Dict[str, str], compact: bool 
     rows = [m for m in ev["matches"] if m.get("scoring")]
     avg_rows = []
     if A.get("n"):
-        avg_rows.append(("avg", "Event average", {c: A[c] or 0.0 for c in CATS}))
+        avg_rows.append(("avg", "Practice average" if ev.get("kind") == "practice" else "Event average",
+                         {c: A[c] or 0.0 for c in CATS}))
     PC = S.get("compare")
     if PC:
         prev_tot = sum((PC["averages"].get(c) or 0.0) for c in CATS)
@@ -260,7 +261,7 @@ def shots_by_match_svg(ev: Dict[str, Any], links: Dict[str, str], compact: bool 
                 bar = _stack(label_w, y + (row_h - bar_h) / 2, bar_h, parts, scale)
                 txt = (f'<tspan class="num">{vals["hub"]:.0f} hub</tspan><tspan class="muted"> · '
                        f'{vals["shuttle_mid"] + vals["shuttle_full"]:.0f} shuttle</tspan>')
-                name = "Average" if compact else "Event average"
+                name = "Average" if compact else label
             else:
                 ph, ps = PC["averages"].get("hub") or 0.0, PC["averages"].get("shuttle") or 0.0
                 bar = _stack(label_w, y + (row_h - bar_h) / 2, bar_h,
@@ -280,7 +281,7 @@ def shots_strip_svg(ev: Dict[str, Any], shots_by_label: Dict[str, List[Dict[str,
                     links: Dict[str, str]) -> str:
     """One row per FMS match: shots per 5 s of match time left, lined up like the brownout chart."""
     total = ev["auto_s"] + ev["teleop_s"]
-    ms = [m for m in ev["matches"] if m.get("scoring") and m["is_fms"]]
+    ms = [m for m in ev["matches"] if m.get("scoring") and m.get("is_match", m["is_fms"])]
     if not ms:
         return ""
     label_w, right_w, row_h, top = 150, 290, 40, 22

@@ -62,6 +62,8 @@ EVENT_DEFAULTS = {
     "code": "",          # the FMS event code its match logs carry, once known
     "codes": [],         # other event codes whose logs belong here too (added by hand)
     "start": "", "end": "",   # the event's dates (YYYY-MM-DD), when set: they place practice logs
+    "kind": "event",     # "event", or "practice": the practice-mode matches of one archive practice group
+    "group": "",         # practice: the group folder, relative to the archive
 }
 
 
@@ -210,6 +212,14 @@ class Store:
         return list(dict.fromkeys(out))
 
     def event_logs(self, eid: str) -> List[str]:
+        ev = self.get_event(eid) or {}
+        if ev.get("kind") == "practice":         # read in place from the archive: no copies
+            out = []
+            for src in ev.get("sources") or []:
+                for top, dirs, files in os.walk(src):
+                    dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in ("boot", "hoot", "unreadable"))
+                    out += [os.path.join(top, f) for f in files if f.lower().endswith(".wpilog")]
+            return sorted(out)
         d = self.logs_dir(eid)
         try:
             return sorted(os.path.join(d, f) for f in os.listdir(d) if f.lower().endswith(".wpilog"))
@@ -220,11 +230,13 @@ class Store:
 def _event_card(ev: Dict[str, Any]) -> Dict[str, Any]:
     """The few numbers the home page shows for an event."""
     A, B = ev.get("averages", {}), ev.get("brownout", {})
-    return {"code": ev.get("code"), "first_stamp": ev.get("first_stamp"), "matches": len(ev.get("matches", [])),
+    return {"code": ev.get("code"), "first_stamp": ev.get("first_stamp"), "last_stamp": ev.get("last_stamp"),
+            "matches": len(ev.get("matches", [])),
             "counted": A.get("n", 0), "ah": A.get("ah"), "mean_a": A.get("mean_a"),
             "with_brownout": B.get("with_brownout"), "brownout_matches": B.get("matches"),
             "median_first_left_s": B.get("median_first_left_s"),
-            "hub_shots": ((ev.get("scoring") or {}).get("averages") or {}).get("hub")}
+            "hub_shots": ((ev.get("scoring") or {}).get("averages") or {}).get("hub"),
+            "kind": ev.get("kind") or "event"}
 
 
 def new_token() -> str:

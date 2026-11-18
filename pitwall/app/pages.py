@@ -154,30 +154,44 @@ then you check what it found. That's saved on this computer and used for every e
 <p><a class="btn primary big-btn" href="/profiles/new">Set up your robot</a></p>
 <p class="hint">You'll need the robot code and a log from the robot. <a href="/profiles">Other ways to add a robot</a></p></div>"""
         return page("Pitwall", body, token, "events")
-    cards = []
-    for e in events:
+    def card(e):
         s = e.get("summary") or {}
         st = status.get(e["id"], {})
-        when = nice_date(s.get("first_stamp") or "") or "No matches yet"
+        when = nice_date(s.get("first_stamp") or "") or ("No practice matches yet" if e.get("kind") == "practice"
+                                                          else "No matches yet")
+        last = nice_date(s.get("last_stamp") or "")
+        if e.get("kind") == "practice" and last and last != when:
+            when = f"{when} – {last}"
         nums = ""
         if s.get("counted"):
-            nums = (f'<div class="nums"><div><b>{s["ah"]:.2f}</b><span>Ah per match</span></div>'
+            per = "per practice match" if e.get("kind") == "practice" else "per match"
+            nums = (f'<div class="nums"><div><b>{s["ah"]:.2f}</b><span>Ah {per}</span></div>'
                     f'<div><b>{s["with_brownout"]} of {s["brownout_matches"]}</b><span>matches with a brownout</span></div>'
-                    + (f'<div><b>{s["hub_shots"]:.0f}</b><span>hub shots per match</span></div>'
+                    + (f'<div><b>{s["hub_shots"]:.0f}</b><span>hub shots {per}</span></div>'
                        if s.get("hub_shots") is not None else
                        f'<div><b>{s["counted"]}</b><span>matches counted</span></div>')
                     + '</div>')
             if s.get("hub_shots") is not None:
                 when += f' · {s["counted"]} matches counted'
-        cards.append(f'<a class="evcard" href="/events/{esc(e["id"])}/"><h3>{esc(e["name"] or "New event")}</h3>'
-                     f'<div class="meta">{esc(s.get("code") or "")}{" · " if s.get("code") else ""}{esc(when)}</div>{nums}'
-                     f'<span class="pill" data-ev="{esc(e["id"])}"><i></i>{esc(st.get("state", ""))}</span></a>')
+        code = s.get("code") or ""
+        return (f'<a class="evcard" href="/events/{esc(e["id"])}/"><h3>{esc(e["name"] or "New event")}</h3>'
+                f'<div class="meta">{esc(code)}{" · " if code else ""}{esc(when)}</div>{nums}'
+                f'<span class="pill" data-ev="{esc(e["id"])}"><i></i>{esc(st.get("state", ""))}</span></a>')
+
+    cards = [card(e) for e in events if e.get("kind") != "practice"]
+    busy = ("analyzing", "building", "queued")
+    practice = [card(e) for e in events if e.get("kind") == "practice"
+                and ((e.get("summary") or {}).get("matches") or status.get(e["id"], {}).get("state") in busy)]
     grid = ('<div class="cards">' + "".join(cards) + "</div>") if cards else (
         '<div class="card empty"><h2>No events yet</h2><p>Make one, then point Pitwall at the folder or USB stick '
         'with the robot logs. New logs are picked up as they arrive.</p></div>')
+    practice_html = ('<div class="row" style="margin-top:32px"><div><p class="eyebrow">Practice</p>'
+                     '<h2>Practice matches, between events</h2></div></div><div class="cards">' + "".join(practice)
+                     + "</div>") if practice else ""
     body = f"""{ROBOT_PANEL}<div class="row"><div><p class="eyebrow">Events</p><h1>Robot logs, by event</h1></div>
 <a class="btn primary big-btn" href="/events/new">+ New event</a></div>
 {grid}
+{practice_html}
 <script>
 function poll(){{api('GET','/api/status').then(function(all){{
   document.querySelectorAll('.pill[data-ev]').forEach(function(p){{var t=statusText(all[p.dataset.ev]);
@@ -401,9 +415,19 @@ def event_settings(ev: Dict[str, Any], summary: Optional[Dict[str, Any]], profil
                f"<tbody>{''.join(rows)}</tbody></table></div>") if rows else "<p class=\"muted\">No matches yet.</p>"
     auto_out = {m["label"] for m in (summary or {}).get("matches", [])
                 if m["why_not"] and m["why_not"] != "Excluded by hand" and not m.get("included_by_hand")}
+    if ev.get("kind") == "practice":
+        dates_html = (f'<p class="hint">Practice matches from the archive folder {esc(ev.get("group") or "")}, read in place. '
+                      'A practice match is a run with the Driver Station\'s practice mode.</p>'
+                      '<input type="hidden" id="start" value=""><input type="hidden" id="end" value="">')
     codes = [c for c in [ev.get("code") or ""] + list(ev.get("codes") or []) if c]
     codes_line = (f'Event code{"s" if len(codes) > 1 else ""}: {esc(", ".join(codes))}.' if codes else
                   "The event code comes from its first match log.")
+    if ev.get("kind") != "practice":
+        dates_html = f"""<label class="f">Event dates</label>
+<div class="rb-new-row"><input type="date" id="start" value="{esc(ev.get("start") or "")}"> to
+<input type="date" id="end" value="{esc(ev.get("end") or "")}"></div>
+<p class="hint">Practice logs from these days are kept with the event. Without dates, it runs from its first to its last match.
+{codes_line}</p>"""
     srcs = "".join(
         f'<div>\U0001F4C1 <span style="flex:1">{esc(s)}</span><button class="btn small" data-rm="{esc(s)}">Stop watching</button></div>'
         for s in ev["sources"]) or '<p class="muted">None.</p>'
@@ -412,11 +436,7 @@ def event_settings(ev: Dict[str, Any], summary: Optional[Dict[str, Any]], profil
 <label class="f" for="name">Event name</label><input type="text" id="name" value="{esc(ev["name"])}">
 <label class="f" for="profile">Robot</label><select id="profile">{popts}</select>
 <label class="f" for="cmp">Compare with</label><select id="cmp">{copt_html}</select>
-<label class="f">Event dates</label>
-<div class="rb-new-row"><input type="date" id="start" value="{esc(ev.get("start") or "")}"> to
-<input type="date" id="end" value="{esc(ev.get("end") or "")}"></div>
-<p class="hint">Practice logs from these days are kept with the event. Without dates, it runs from its first to its last match.
-{codes_line}</p>
+{dates_html}
 <label class="toggle"><input type="checkbox" id="watch"{" checked" if ev["watch"] else ""}> Watch the folders below for new logs</label>
 <label class="f">Watched folders</label><div class="chosen">{srcs}</div>
 </section>

@@ -44,7 +44,8 @@ def match_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "label": I["label"], "type": I["match_type"], "number": I["match_number"],
         "event": (I.get("event") or "").strip(), "is_fms": I["is_fms"],
-        "file": payload["source"]["file"], "stamp": I.get("stamp", ""),
+        "is_match": I.get("is_match", I["is_fms"]), "practice": I.get("practice", 0),
+        "file": payload["source"]["file"], "stamp": I.get("stamp", ""), "day": I.get("day", ""),
         "build": (I.get("git_sha") or "")[:7], "dirty": bool(I.get("git_dirty")),
         "flags": payload.get("flags", []),
         "silent": payload.get("silent", {}),
@@ -88,7 +89,8 @@ def group_by_event(payloads: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Li
     for p in payloads:
         code = (p["identity"].get("event") or "").strip().upper()
         g = out.setdefault(code, {"matches": [], "other": []})
-        (g["matches"] if p["identity"]["is_fms"] else g["other"]).append(p)
+        is_match = p["identity"].get("is_match", p["identity"]["is_fms"])
+        (g["matches"] if is_match else g["other"]).append(p)
     return out
 
 
@@ -117,7 +119,7 @@ def build_event(code: str, payloads: List[Dict[str, Any]], others: List[Dict[str
     # Which matches count
     for m in matches:
         why = None
-        if m["type"] == "P":
+        if m["type"] == "P" and m["is_fms"]:
             why = "Practice match"
         elif m["enabled_s"] < 0.9 * nominal:
             why = f"Enabled for only {m['enabled_s']:.0f} s"
