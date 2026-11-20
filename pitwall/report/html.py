@@ -279,7 +279,8 @@ def base_css() -> str:
 
 
 def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str,
-           scoring: Optional[Dict[str, Any]] = None, nav: Optional[Dict[str, Any]] = None) -> str:
+           scoring: Optional[Dict[str, Any]] = None, nav: Optional[Dict[str, Any]] = None,
+           health: Optional[Dict[str, Any]] = None) -> str:
     """The match page: an Overview tab, then a tab per module (Power, Scoring).
 
     `nav` = {"prev": (label, href), "next": (label, href), "event": href} links a match page to
@@ -403,9 +404,13 @@ def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str,
         "total": result["series"]["total_a"],
     }, separators=(",", ":"))
 
+    from .health_html import HEALTH_CSS, health_tiles, match_section as health_section
     has_sc = bool(scoring)
     scoring_body = match_section(scoring, result["series"], head=False)
-    tabs = [("overview", "Overview"), ("power", "Power")] + ([("scoring", "Scoring")] if has_sc else [])
+    has_h = bool(health and health.get("available"))
+    health_body = health_section(health, result["series"]) if has_h else ""
+    tabs = ([("overview", "Overview"), ("power", "Power")] + ([("scoring", "Scoring")] if has_sc else [])
+            + ([("health", "Health")] if has_h else []))
     tab_bar = tabbar(tabs, match_nav(nav))
 
     # Overview: each module's headline numbers, then current, battery and shots on one time axis
@@ -420,12 +425,15 @@ def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str,
         cards.append(module_card("Scoring", "scoring", "", scoring_tiles(scoring)))
     elif has_sc:
         cards.append(f'<section class="card modcard"><h2>Scoring</h2><p class="lead">{esc(scoring.get("why", ""))}</p></section>')
+    if has_h:
+        cards.append(module_card("Health", "health", "", health_tiles(health)))
     shots_chart = ""
     if sc_ok:
         shots_chart = ('<div class="legend" style="margin-top:18px"><b class="small">SHOTS PER 2 S</b>'
                        + legend_html() + '</div>' + shots_timeline_svg(scoring, result["series"]))
     obs_all = combined_observations([("Power", result["observations"])]
-                                    + ([("Scoring", scoring.get("observations", []))] if sc_ok else []))
+                                    + ([("Scoring", scoring.get("observations", []))] if sc_ok else [])
+                                    + ([("Health", health.get("observations", []))] if has_h else []))
     overview = (f'<div class="modcards">{"".join(cards)}</div>'
                 f'<section class="card"><h2>Current, battery{" and shots" if sc_ok else ""} through the match</h2>'
                 f'<p class="lead">One time axis for everything. Shaded shifts are the ones where our hub was inactive. '
@@ -434,10 +442,11 @@ def render(result: Dict[str, Any], ident: Dict[str, Any], profile_name: str,
                 f'{timeline_svg(result["series"], subs, "ov")}{shots_chart}</section>'
                 f'<section class="card"><h2>Things to check</h2><ul class="obs">'
                 f'{obs_all or "<li class=muted>Nothing flagged. Each tab lists its own notes too.</li>"}</ul></section>')
-    scoring_panel = panel("scoring", "Scoring", scoring_body) if has_sc else ""
+    scoring_panel = (panel("scoring", "Scoring", scoring_body) if has_sc else "") + \
+        (panel("health", "Health", health_body) if has_h else "")
 
     return PAGE.format(
-        css=base_css() + SECTION_CSS + TABS_CSS, head_js=HEAD_JS, tabs_js=TABS_JS, title=esc(title),
+        css=base_css() + SECTION_CSS + TABS_CSS + HEALTH_CSS, head_js=HEAD_JS, tabs_js=TABS_JS, title=esc(title),
         event=esc(ident.get("event") or "Practice"),
         tabbar=tab_bar, overview_open='<div class="tabpanel" id="tab-overview" role="tabpanel"><h2 class="tabtitle">Overview</h2>',
         overview=overview, power_open='<div class="tabpanel" id="tab-power" role="tabpanel"><h2 class="tabtitle">Power</h2>',

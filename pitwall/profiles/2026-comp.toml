@@ -347,3 +347,14 @@ shooting = "/RealOutputs/RobotContainer/IsShooting"
 feeding = "/RealOutputs/RobotContainer/OnTargetRobot"
 targeting_hub = "/RealOutputs/TrajectorySolver/IsTargetingHub"
 full_field = "/RealOutputs/TrajectorySolver/IsFullField"   # not logged yet; setpoint >= 99.5 is used instead
+
+# Health: the robot's own health monitor (one boolean per check under Health/Faults, true while
+# active), the tread wear tracker, roboRIO CAN bus and loop timing. Power checks are left to the
+# Power tab. These are the defaults; the section only has to be here to turn the module on.
+[health]
+faults = "/RealOutputs/Health/Faults/"
+skip = ["Power/"]
+warnings = ["CAN/BusErrors", "CAN/HighUtilization", "Vision/"]
+wear = "/RealOutputs/Usage/Tread/"
+wear_name = "Tread"
+loop_target_ms = 20

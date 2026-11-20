@@ -13,7 +13,7 @@ from .report.html import render
 
 
 # Bump when the report pages change, so the app rebuilds reports made by an older Pitwall.
-REPORT_VERSION = 9
+REPORT_VERSION = 10
 
 
 def _stem(file_name: str) -> str:
@@ -30,7 +30,8 @@ def write_match_report(payload: Dict[str, Any], out_dir: str, nav: Optional[Dict
     with open(os.path.join(out_dir, stem + ".power.json"), "w", encoding="utf-8") as f:
         json.dump(saved, f, indent=1)
     with open(os.path.join(out_dir, stem + ".html"), "w", encoding="utf-8") as f:
-        f.write(render(payload["power"], payload["identity"], payload["profile"], payload.get("scoring"), nav))
+        f.write(render(payload["power"], payload["identity"], payload["profile"], payload.get("scoring"), nav,
+                       payload.get("health")))
     return stem + ".html"
 
 

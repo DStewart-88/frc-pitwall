@@ -607,6 +607,10 @@ def overview_html(ev: Dict[str, Any], links: Dict[str, str], power_stats: List[t
                                                 by_label["Time left at first brownout"]])]
     if has_sc and (ev.get("scoring") or {}).get("averages", {}).get("n"):
         cards.append(module_card("Scoring", "scoring", "", scoring_tiles(ev)))
+    has_h = bool((ev.get("health") or {}).get("averages", {}).get("n"))
+    if has_h:
+        from .health_html import health_event_tiles
+        cards.append(module_card("Health", "health", "", health_event_tiles(ev)))
     # Charts, not tables: where the charge goes, and shots in each match. Match names link to the match.
     from .scoring_html import legend_html, shots_by_match_svg
     charts = [charge_split_html(ev, compact=True)]
@@ -623,6 +627,8 @@ def overview_html(ev: Dict[str, Any], links: Dict[str, str], power_stats: List[t
     groups = [("Power", ev["observations"])]
     if has_sc:
         groups.append(("Scoring", (ev.get("scoring") or {}).get("observations", [])))
+    if has_h:
+        groups.append(("Health", (ev.get("health") or {}).get("observations", [])))
     obs = combined_observations(groups)
     n, total = ev["averages"].get("n", 0), len(ev["matches"])
     return (f'<div class="modcards">{"".join(cards)}</div>'
@@ -818,15 +824,20 @@ For time left at first brownout, a bigger number means the battery gave out earl
     if last and last != date:
         date = f"{date} – {last}"
 
+    from .health_html import HEALTH_CSS, event_section as health_event_section
     scoring_body = event_section(ev, shots_by_label or {}, match_links, head=False)
     has_sc = bool(scoring_body)
-    tabs = [("overview", "Overview"), ("power", "Power")] + ([("scoring", "Scoring")] if has_sc else [])
+    health_body = health_event_section(ev, match_links)
+    has_h = bool(health_body)
+    tabs = ([("overview", "Overview"), ("power", "Power")] + ([("scoring", "Scoring")] if has_sc else [])
+            + ([("health", "Health")] if has_h else []))
     overview = overview_html(ev, match_links, stats, has_sc, scoring_event_tiles, module_card,
                              combined_observations, other)
     return PAGE.format(
-        css=base_css() + SECTION_CSS + TABS_CSS, extra_css=EXTRA_CSS, head_js=HEAD_JS, tabs_js=TABS_JS,
+        css=base_css() + SECTION_CSS + TABS_CSS + HEALTH_CSS, extra_css=EXTRA_CSS, head_js=HEAD_JS, tabs_js=TABS_JS,
         tabbar=tabbar(tabs), overview=overview,
-        scoring_panel=panel("scoring", "Scoring", scoring_body) if has_sc else "", donut_css=DONUT_CSS, donut_js=DONUT_JS, title=esc(ev["name"]), code=esc(ev["code"] or ("Practice" if ev.get("kind") == "practice" else "")),
+        scoring_panel=(panel("scoring", "Scoring", scoring_body) if has_sc else "")
+        + (panel("health", "Health", health_body) if has_h else ""), donut_css=DONUT_CSS, donut_js=DONUT_JS, title=esc(ev["name"]), code=esc(ev["code"] or ("Practice" if ev.get("kind") == "practice" else "")),
         date=esc(date), profile=esc(ev["profile"]), builds=esc(", ".join(ev["builds"]) or "unknown"),
         n_matches=len(ev["matches"]), n=n, stats=stat_html, legend=legend,
         charge_chart=charge_by_match_svg(ev, links), charge_split=charge_split_html(ev),

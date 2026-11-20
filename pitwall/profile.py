@@ -103,6 +103,29 @@ class Scoring:
 
 
 @dataclass
+class Health:
+    """Keys for the health module: the robot's own health checks, wear tracking, CAN and loop timing.
+
+    `faults` is the folder of per-check booleans the robot's health monitor writes (true while a
+    fault is active); `alerts` are the WPILib alert lists whose text names each fault. Checks
+    under a `skip` prefix aren't listed (power checks: the Power tab covers them). `wear` is the
+    folder of wear trackers, one subfolder per part (2026: swerve tread per module).
+    """
+    faults: str = "/RealOutputs/Health/Faults/"
+    alerts_errors: KeyList = field(default_factory=lambda: ["/RealOutputs/Alerts/errors"])
+    alerts_warnings: KeyList = field(default_factory=lambda: ["/RealOutputs/Alerts/warnings"])
+    skip: List[str] = field(default_factory=lambda: ["Power/"])
+    warnings: List[str] = field(default_factory=lambda: ["CAN/BusErrors", "CAN/HighUtilization", "Vision/"])
+    wear: str = "/RealOutputs/Usage/Tread/"
+    wear_name: str = "Tread"
+    loop: KeyList = field(default_factory=lambda: ["/RealOutputs/LoggedRobot/FullCycleMS"])
+    user_code: KeyList = field(default_factory=lambda: ["/RealOutputs/LoggedRobot/UserCodeMS"])
+    gc: KeyList = field(default_factory=lambda: ["/RealOutputs/LoggedRobot/GCTimeMS"])
+    can: str = "/SystemStats/CANBus/"
+    loop_target_ms: float = 20.0
+
+
+@dataclass
 class Unmeasured:
     name: str
     estimate_amps: float = 0.0
@@ -131,6 +154,7 @@ class Profile:
     states: List[State] = field(default_factory=list)
     unmeasured: List[Unmeasured] = field(default_factory=list)
     scoring: Optional[Scoring] = None     # no [scoring] section: no scoring report
+    health: Optional[Health] = None       # no [health] section: no health report
 
     def subsystem(self, sid: str) -> Subsystem:
         for s in self.subsystems:
@@ -217,6 +241,17 @@ def load_profile(path: str) -> Profile:
                      "hangover_s", "window_s", "level_s", "burst_gap_s"):
             if name in sc:
                 setattr(p.scoring, name, float(sc[name]))
+    hs = data.get("health")
+    if hs is not None:
+        p.health = Health()
+        for name in ("faults", "wear", "wear_name", "can"):
+            if name in hs:
+                setattr(p.health, name, str(hs[name]))
+        for name in ("alerts_errors", "alerts_warnings", "skip", "warnings", "loop", "user_code", "gc"):
+            if name in hs:
+                setattr(p.health, name, _keys(hs[name]))
+        if "loop_target_ms" in hs:
+            p.health.loop_target_ms = float(hs["loop_target_ms"])
     for s in p.subsystems:
         for st in s.needed_in:
             if st not in {x.name for x in p.states} | {"Other"}:
