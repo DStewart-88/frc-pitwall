@@ -6,6 +6,7 @@ Each report has a section per module:
 
 - **Power**: how much charge the battery delivered each match, which subsystems and motors used it, and when the battery gave out.
 - **Scoring**: how many balls the robot shot (hub and shuttle shots separately), how fast, and in which shift. Shots are counted from the flywheel speed, so no robot code change is needed.
+- **Health**: which devices left the CAN bus or raised a warning (from the robot's own health checks, with the robot's alert text and CAN ID, how long and how often), wear-part distance (swerve tread), roboRIO CAN bus use and robot loop timing. The event page shows a grid of checks by match, so a device that keeps dropping out stands out. Brownouts stay on the Power tab.
 
 A module only appears when the robot profile sets it up.
 

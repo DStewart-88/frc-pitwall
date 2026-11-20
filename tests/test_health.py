@@ -1,6 +1,5 @@
 """Health module: device checks, wear, CAN and loop timing, on a synthetic match log."""
 
-import json
 import os
 import shutil
 import tempfile
