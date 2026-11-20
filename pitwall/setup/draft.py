@@ -88,6 +88,15 @@ def scoring_draft(log_keys: Dict[str, str], motors: List[Dict[str, Any]], shooti
     return d
 
 
+def health_draft(log_keys: Dict[str, str]) -> Dict[str, Any]:
+    """Turn the Health section on when the sample log has the robot's health checks, wear tracking
+    or loop timing (any of them is enough; the module shows what each log has)."""
+    found = {"faults": any(k.startswith("/RealOutputs/Health/Faults/") for k in log_keys),
+             "wear": any(k.startswith("/RealOutputs/Usage/") for k in log_keys),
+             "loop": "/RealOutputs/LoggedRobot/FullCycleMS" in log_keys}
+    return {"include": any(found.values()) or not log_keys, "found": found}
+
+
 def make_draft(scan: ScanResult, log: Optional[WPILog] = None, robot_name: str = "") -> Dict[str, Any]:
     log_keys: Dict[str, str] = dict(log.entries()) if log else {}
     has = (lambda k: k in log_keys) if log else (lambda k: True)
@@ -170,6 +179,7 @@ def make_draft(scan: ScanResult, log: Optional[WPILog] = None, robot_name: str =
         "motors": motors, "unclaimed": unclaimed, "supply_keys": supply_in_log,
         "subsystems": subsystems,
         "scoring": scoring_draft(log_keys, motors, shooting_key),
+        "health": health_draft(log_keys),
         "shooting_key": shooting_key, "shooting_choices": shoot or [k for k in bools if "shoot" in k.lower()],
         "driving_keys": drive_vel,
         "game": game, "games": {k: v["label"] for k, v in GAMES.items()},
@@ -266,4 +276,7 @@ def draft_to_toml(d: Dict[str, Any]) -> str:
             if sc.get(f):
                 out.append(f"{f} = {_q(sc[f])}")
         out.append("")
+    if (d.get("health") or {}).get("include"):
+        out += ["# Health: the robot's own health checks, wear tracking, CAN bus and loop timing (the Health tab).",
+                "# Power checks are left to the Power tab.", "[health]", 'skip = ["Power/"]', ""]
     return "\n".join(out)

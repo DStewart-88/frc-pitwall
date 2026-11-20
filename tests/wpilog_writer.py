@@ -25,6 +25,7 @@ class LogWriter:
     def put(self, name, t_s, value, typ=None):
         if name not in self.ids:
             typ = typ or ("boolean" if isinstance(value, bool) else "string" if isinstance(value, str)
+                          else "string[]" if isinstance(value, list)
                           else "int64" if isinstance(value, int) else "double")
             self._start(name, typ)
         eid, typ = self.ids[name]
@@ -34,6 +35,8 @@ class LogWriter:
             p = struct.pack("<q", value)
         elif typ == "boolean":
             p = bytes([1 if value else 0])
+        elif typ == "string[]":
+            p = struct.pack("<I", len(value)) + b"".join(struct.pack("<I", len(x.encode())) + x.encode() for x in value)
         else:
             p = value.encode()
         self._record(eid, int(round(t_s * 1e6)), p)

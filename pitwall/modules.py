@@ -10,7 +10,7 @@ own section on the match and event pages, only when the robot profile sets them 
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
-from . import power, scoring
+from . import health, power, scoring
 
 
 @dataclass(frozen=True)
@@ -31,5 +31,9 @@ SCORING = Module("scoring", "Scoring", applies=scoring.applies, analyze=scoring.
                  summary=scoring.match_summary, roll_up=scoring.roll_up, compare=scoring.compare,
                  observations=scoring.observations)
 
-MODULES = (POWER, SCORING)
+HEALTH = Module("health", "Health", applies=health.applies, analyze=health.analyze,
+                summary=health.match_summary, roll_up=health.roll_up, compare=health.compare,
+                observations=health.observations)
+
+MODULES = (POWER, SCORING, HEALTH)
 EXTRA = tuple(m for m in MODULES if m.roll_up is not None)   # modules with their own event section
